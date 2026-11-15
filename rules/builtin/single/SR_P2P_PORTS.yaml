@@ -1,0 +1,19 @@
+id: SR_P2P_PORTS
+name: "[검증] P2P(토렌트) 통신"
+description: 내부 호스트가 10분 안에 P2P 분류 시그니처 또는 토렌트 포트(6881~6889, 6969) 아웃바운드 통신 5건 이상. 사례 유형 "웹해킹 / 토렌트 관련 다수 메소드 탐지".
+type: count
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  any:
+    - {field: signature_category, op: eq, value: p2p}
+    - all:
+        - {field: net_direction, op: eq, value: outbound}
+        - {field: dst_port, op: in, value: [6881, 6882, 6883, 6884, 6885, 6886, 6887, 6888, 6889, 6969]}
+aggregate: {func: count}
+window: 10m
+threshold: 5
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: low

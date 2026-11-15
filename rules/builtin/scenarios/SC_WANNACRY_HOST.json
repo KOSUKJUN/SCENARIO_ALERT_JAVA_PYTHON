@@ -1,0 +1,29 @@
+{
+  "id": "SC_WANNACRY_HOST",
+  "name": "[검증] WannaCry 감염 징후",
+  "entity_type": "host",
+  "suppress_for": "6h",
+  "description": "킬스위치 접속·WannaCry 시그니처(출발지 또는 내부 목적지). 앞뒤 24시간에 SMB 다수 접근이 있으면 긴급, 레거시·의료장비·파일서버면 높음, 아니면 중간",
+  "nodes": [
+    {"id": "n0", "type": "start", "pos": [40, 160]},
+    {"id": "n1", "type": "rule", "rule_id": "SR_WANNACRY_SIG", "pos": [200, 80]},
+    {"id": "n2", "type": "rule", "rule_id": "SR_WANNACRY_SIG_DST", "pos": [200, 240]},
+    {"id": "j1", "type": "or", "pos": [400, 160]},
+    {"id": "n3", "type": "check", "rule_ids": ["SR_SMB_OUT_FANOUT", "SR_SMB_IN_FANOUT"], "lookaround": "24h", "label": "SMB 다수 접근(전파)? (앞뒤 24시간)", "pos": [560, 160]},
+    {"id": "n4", "type": "asset", "tags": ["legacy_os", "medical_device", "kiosk", "fileserver"], "label": "레거시·의료장비·파일서버인가?", "pos": [800, 240]},
+    {"id": "a1", "type": "alert", "severity": "critical", "title": "WannaCry 감염 + SMB 전파: {{entity}}", "playbook": "네트워크 절체(포맷 금지), 랜섬웨어 exe 채증 후 검역소 보관, SMB(445) 비활성화, 추가 감염 여부 확인, 백신 정밀 점검, 호스트 점검 로그 채증", "pos": [1040, 60]},
+    {"id": "a2", "type": "alert", "severity": "high", "title": "WannaCry 징후 (레거시·의료장비·파일서버): {{entity}}", "playbook": "자산 정보(용도, OS, 진료정보 보유 여부) 확인, 외부 인터넷 차단 여부 확인, SMB 포트 사용 여부 확인 후 비활성화, 백신 정밀 점검·호스트 점검 로그 채증 결과 회신 요청", "pos": [1040, 200]},
+    {"id": "a3", "type": "alert", "severity": "medium", "title": "WannaCry 징후: {{entity}}", "playbook": "출발지 자산 정보 회신 요청, 감염 시 네트워크 절체 및 악성 프로그램(mssecsvc.exe, tasksche.exe) 삭제, 불필요 포트 비활성화", "pos": [1040, 340]}
+  ],
+  "edges": [
+    {"from": "n0", "to": "n1"},
+    {"from": "n0", "to": "n2"},
+    {"from": "n1", "to": "j1"},
+    {"from": "n2", "to": "j1"},
+    {"from": "j1", "to": "n3"},
+    {"from": "n3", "to": "a1", "branch": "yes"},
+    {"from": "n3", "to": "n4", "branch": "no"},
+    {"from": "n4", "to": "a2", "branch": "yes"},
+    {"from": "n4", "to": "a3", "branch": "no"}
+  ]
+}

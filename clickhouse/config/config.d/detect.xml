@@ -1,0 +1,14 @@
+<clickhouse>
+    <timezone>Asia/Seoul</timezone>
+    <logger><level>warning</level></logger>
+    <!-- MariaDB 접속 정보: 딕셔너리 SQL에는 쓰지 않고 named collection 으로만 참조한다 -->
+    <named_collections>
+        <mariadb_detect>
+            <host>mariadb</host>
+            <port>3306</port>
+            <user>detect_dict</user>
+            <password from_env="DICT_PASSWORD"/>
+            <db>detect</db>
+        </mariadb_detect>
+    </named_collections>
+</clickhouse>

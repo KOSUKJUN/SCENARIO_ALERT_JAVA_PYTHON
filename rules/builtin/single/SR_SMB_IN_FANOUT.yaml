@@ -1,0 +1,17 @@
+id: SR_SMB_IN_FANOUT
+name: 내부 445 다수 접근 (내부 확산)
+description: 내부 호스트가 10분 안에 내부 IP 다수의 445(SMB) 포트로 접근.
+type: count
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IPS, TMS]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: internal}
+    - {field: dst_port, op: eq, value: 445}
+aggregate: {func: distinct_count, field: dst_ip}
+window: 10m
+threshold: 10
+exclude_lists: [smb_allowed_sources, false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

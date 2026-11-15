@@ -1,0 +1,16 @@
+id: SR_WANNACRY_SIG_DST
+name: "[검증] WannaCry 시그니처 (내부 목적지 기준)"
+description: WannaCry 분류 시그니처의 목적지가 내부 대역인 이벤트. 내부 파일서버 등 "통신을 받은" 자산을 대상으로 삼는다. 사례 유형 "내부 IP 에서 내부 파일서버로 랜섬웨어 의심 통신".
+type: signature
+entity: {type: host, field: dst_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  all:
+    - {field: signature_category, op: eq, value: ransomware_wannacry}
+    - {field: dst_internal, op: eq, value: true}
+min_count: 1
+window: 5m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

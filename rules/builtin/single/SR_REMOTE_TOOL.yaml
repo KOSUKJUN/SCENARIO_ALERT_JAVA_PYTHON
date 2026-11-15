@@ -1,0 +1,18 @@
+id: SR_REMOTE_TOOL
+name: 원격제어 도구 사용
+description: 원격제어 도구 분류 시그니처, 또는 도구 포트(AnyDesk 6568·7070, TeamViewer 5938) 아웃바운드 접속.
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  any:
+    - {field: signature_category, op: eq, value: remote_tool}
+    - all:
+        - {field: net_direction, op: eq, value: outbound}
+        - {field: dst_port, op: in, value: [6568, 7070, 5938]}
+min_count: 1
+window: 10m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: low

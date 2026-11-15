@@ -1,0 +1,28 @@
+setup:
+  assets: []
+  list_items: []
+alerts:
+  - source_id: "SC_ORG_OUTBREAK"
+    entity: "ORG001"
+    severity: "critical"
+    case: "외부 445 접근 호스트 3대 이상 + 유해 IP 통신 호스트 2대 이상 (기관 단위)"
+  - source_id: "SC_TI_CONTACT"
+    entity: "10.10.9.10"
+    severity: "low"
+    case: "유해 IP 통신만"
+  - source_id: "SC_TI_CONTACT"
+    entity: "10.10.9.11"
+    severity: "low"
+    case: "유해 IP 통신만"
+no_alert:
+  - entity: "10.10.9.12"
+    case: "호스트별로는 목적지 5개 (임계치 20 미만)"
+  - entity: "10.10.9.13"
+    case: "호스트별로는 목적지 5개"
+  - entity: "10.10.9.14"
+    case: "호스트별로는 목적지 5개"
+hits:
+  SR_TI_HIT:
+    - "10.10.9.10"
+    - "10.10.9.11"
+note: "사례: PC 4대 동시 감염 (호스트 단위 룰로는 각각 임계치 미달). 새 기능: 대상 유형 org (기관 단위 집계)"

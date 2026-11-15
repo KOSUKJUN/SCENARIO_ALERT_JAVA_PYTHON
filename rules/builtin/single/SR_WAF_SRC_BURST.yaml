@@ -1,0 +1,17 @@
+id: SR_WAF_SRC_BURST
+name: "[검증] WAF 공격 출발지 폭증"
+description: 한 출발지 IP 가 1분 안에 WAF 공격 탐지 300건 이상 (event_count 합계). 사례 유형 "웹해킹_기타 / WAF 공격 300건 이상 탐지"의 출발지 차단 판단용.
+type: count
+entity: {type: host, field: src_ip}
+data_tp: [WAF]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: inbound}
+    - {field: attack, op: exists}
+aggregate: {func: count}
+window: 1m
+threshold: 300
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

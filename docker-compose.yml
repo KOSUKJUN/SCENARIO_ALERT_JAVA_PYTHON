@@ -1,0 +1,166 @@
+# 개발·테스트용 구성 (docker compose up -d --build)
+# - clickhouse : 이벤트 저장소(codlog.log_integrated_success_all 테스트 사본) + detect DB
+# - mariadb    : 설정·경보 저장소 (ClickHouse 딕셔너리 원본). 시나리오별 생성 Python 코드도 여기 저장
+# - init       : Flyway 마이그레이션 + ClickHouse SQL + 기본 룰/순서도(→ Python 코드 생성) + 샘플 데이터 (1회 실행 후 종료)
+# - server     : Java API + 스케줄러 (탐지 서버 1호기). 시나리오 평가는 컨테이너 안의 Python 상주 프로세스가 한다
+# - worker     : 스케줄러 전용 (탐지 서버 2호기, 무상태 다중 실행 확인용)
+# - web        : 관리 화면 (Vue, nginx. /api 는 server 로 프록시)
+# - mockcase   : 사고처리 시스템 모의 서버 (경보 수신, 판정 회신)
+# - tester     : 테스트 전용 (docker compose --profile test run --rm tester)
+# 접속 정보는 .env 로 덮어쓸 수 있다 (기본값은 개발용).
+
+x-server-env: &server-env
+  TZ: Asia/Seoul
+  DB_URL: jdbc:mariadb://mariadb:3306/detect?characterEncoding=utf8
+  DB_USER: ${MARIADB_USER:-detect}
+  DB_PASSWORD: ${MARIADB_PASSWORD:-detect_pw}
+  CH_URL: http://clickhouse:8123
+  CH_USER: ${CH_USER:-detect}
+  CH_PASSWORD: ${CH_PASSWORD:-detect_pw}
+  CH_BT_USER: ${CH_BT_USER:-detect_bt}
+  CH_BT_PASSWORD: ${CH_BT_PASSWORD:-detect_bt_pw}
+  CH_ADMIN_USER: ${CH_ADMIN_USER:-default}
+  CH_ADMIN_PASSWORD: ${CH_ADMIN_PASSWORD:-admin_pw}
+  CASE_WEBHOOK_URL: ${CASE_WEBHOOK_URL:-http://mockcase:8090/api/alerts}
+  CASE_SERVICE_TOKEN: ${CASE_SERVICE_TOKEN:-case-service-token}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+  ENABLE_DEV_TOOLS: ${ENABLE_DEV_TOOLS:-true}
+  PYTHON_WORKERS: ${PYTHON_WORKERS:-2}
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      TZ: Asia/Seoul
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root_pw}
+      MARIADB_DATABASE: detect
+      MARIADB_USER: ${MARIADB_USER:-detect}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-detect_pw}
+      DICT_PASSWORD: ${DICT_PASSWORD:-dict_pw}
+    command: ["--default-time-zone=+09:00", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--group-concat-max-len=65535"]
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./mariadb/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${MARIADB_HOST_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      TZ: Asia/Seoul
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CH_ADMIN_PASSWORD:-admin_pw}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CH_PASSWORD: ${CH_PASSWORD:-detect_pw}
+      CH_BT_PASSWORD: ${CH_BT_PASSWORD:-detect_bt_pw}
+      DICT_PASSWORD: ${DICT_PASSWORD:-dict_pw}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/config/config.d/detect.xml:/etc/clickhouse-server/config.d/detect.xml:ro
+      - ./clickhouse/config/users.d/detect-users.xml:/etc/clickhouse-server/users.d/detect-users.xml:ro
+    ports:
+      - "${CH_HOST_PORT:-8123}:8123"
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--password", "${CH_ADMIN_PASSWORD:-admin_pw}", "-q", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  init:
+    image: scenario-engine-java/server:${APP_VERSION:-0.3.0}
+    build: {context: ., target: runtime}
+    environment:
+      <<: *server-env
+      APP_MODE: init
+      SEED_SAMPLE: ${SEED_SAMPLE:-true}
+      SAMPLE_HOURS: ${SAMPLE_HOURS:-2}
+      BUILTIN_STATUS: ${BUILTIN_STATUS:-active}
+    depends_on:
+      mariadb: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    restart: "no"
+
+  server:
+    image: scenario-engine-java/server:${APP_VERSION:-0.3.0}
+    build: {context: ., target: runtime}
+    environment:
+      <<: *server-env
+      APP_MODE: server
+      RUN_SCHEDULER: "true"
+      INSTANCE_ID: server-1
+    volumes:
+      # 시나리오별로 생성된 Python 코드를 호스트에서 바로 볼 수 있게 한다 (원본은 MariaDB, 이 파일은 캐시)
+      - ./data/scenarios:/app/data/scenarios
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    depends_on:
+      init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  worker:
+    image: scenario-engine-java/server:${APP_VERSION:-0.3.0}
+    build: {context: ., target: runtime}
+    environment:
+      <<: *server-env
+      APP_MODE: worker
+      INSTANCE_ID: server-2
+    depends_on:
+      init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  web:
+    image: scenario-engine-java/web:${APP_VERSION:-0.3.0}
+    build: ./web
+    ports:
+      - "${WEB_HOST_PORT:-8080}:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  mockcase:
+    image: scenario-engine-java/mockcase:${APP_VERSION:-0.3.0}
+    build: ./mockcase
+    environment:
+      TZ: Asia/Seoul
+      DETECT_HOOK_URL: http://server:8000/api/v1/hooks/case-verdict
+      CASE_SERVICE_TOKEN: ${CASE_SERVICE_TOKEN:-case-service-token}
+    ports:
+      - "${MOCKCASE_HOST_PORT:-8090}:8090"
+    restart: unless-stopped
+
+  # 테스트 전용: docker compose --profile test run --rm --no-deps tester
+  # 단위 테스트(Java) + Python 런타임 테스트 + 통합 테스트(실제 ClickHouse·MariaDB·Python). 개발 DB 를 초기화한다.
+  tester:
+    image: scenario-engine-java/tester:${APP_VERSION:-0.3.0}
+    build: {context: ., target: tester}
+    profiles: ["test"]
+    environment:
+      <<: *server-env
+      APP_MODE: test
+      ENABLE_DEV_TOOLS: "true"
+      APP_ROOT_DIR: /app
+      PYTHON_RUNTIME_DIR: /app/python
+      SCENARIO_CODE_DIR: /tmp/scenarios
+    volumes:
+      - ./pom.xml:/app/pom.xml:ro
+      - ./src:/app/src:ro
+      - ./python:/app/python:ro
+      - ./rules:/app/rules:ro
+      - ./clickhouse:/app/clickhouse:ro
+      - ./testdata:/app/testdata:ro
+      - ./scripts:/app/scripts:ro
+      - ./test-reports:/app/test-reports
+    depends_on:
+      mariadb: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+volumes:
+  mariadb-data:
+  clickhouse-data:

@@ -1,0 +1,47 @@
+setup:
+  assets:
+  - - 10.10.1.50
+    - - legacy_os
+      - medical_device
+  list_items:
+  - - false_positive_hosts
+    - 10.10.1.57
+  - - smb_allowed_sources
+    - 10.10.1.99
+alerts:
+- source_id: SC_SMB_WORM
+  entity: 10.10.1.50
+  severity: critical
+  case: 레거시 자산
+- source_id: SC_SMB_WORM
+  entity: 10.10.1.52
+  severity: critical
+  case: WannaCry 확인
+- source_id: SR_WANNACRY_SIG
+  entity: 10.10.1.52
+  severity: high
+  case: 단독 경보
+- source_id: SC_WANNACRY_HOST
+  entity: 10.10.1.52
+  severity: critical
+  case: WannaCry 시그니처 + 외부 445 다수 (사례 순서도, 같은 히트를 다른 관점으로 본다)
+- source_id: SC_SMB_WORM
+  entity: 10.10.1.53
+  severity: high
+  case: 일반 PC
+no_alert:
+- entity: 10.10.1.54
+  case: 임계치 바로 아래 (목적지 19개)
+- entity: 10.10.1.56
+  case: 허용 시간 밖 (30분에 걸쳐 흩어짐)
+- entity: 10.10.1.57
+  case: 예외 리스트 (false_positive_hosts)
+- entity: 10.10.1.99
+  case: 예외 리스트 (smb_allowed_sources)
+hits:
+  SR_SMB_OUT_FANOUT:
+  - 10.10.1.50
+  - 10.10.1.52
+  - 10.10.1.53
+  SR_WANNACRY_SIG:
+  - 10.10.1.52

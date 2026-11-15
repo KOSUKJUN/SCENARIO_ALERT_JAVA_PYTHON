@@ -1,0 +1,42 @@
+setup:
+  assets:
+    -
+      - "10.10.7.11"
+      -
+        - "legacy_os"
+  list_items:
+    -
+      - "false_positive_hosts"
+      - "10.10.7.13"
+alerts:
+  - source_id: "SC_TI_CONTACT"
+    entity: "10.10.7.10"
+    severity: "high"
+    case: "유해 IP 통신 + 외부 원격포트 다수 접근"
+  - source_id: "SC_REMOTE_SCAN_OUT"
+    entity: "10.10.7.10"
+    severity: "high"
+    case: "외부 원격포트 다수 접근 (일반 자산)"
+  - source_id: "SC_TI_CONTACT"
+    entity: "10.10.7.11"
+    severity: "medium"
+    case: "유해 IP 통신만, 레거시 자산"
+    counterexample: true
+  - source_id: "SC_TI_CONTACT"
+    entity: "10.10.7.12"
+    severity: "low"
+    case: "유해 IP 통신만, 일반 자산"
+    counterexample: true
+no_alert:
+  - entity: "10.10.7.13"
+    case: "예외 리스트"
+  - entity: "10.10.7.15"
+    case: "유해 IP 리스트에 없는 외부 IP"
+hits:
+  SR_TI_HIT:
+    - "10.10.7.10"
+    - "10.10.7.11"
+    - "10.10.7.12"
+  SR_REMOTE_PORT_FANOUT:
+    - "10.10.7.10"
+note: "사례: C-TAS 유해 IP 통신 이력 → 445 지속 통신 → 감염 확인 (Windows 7 PC 다수)"

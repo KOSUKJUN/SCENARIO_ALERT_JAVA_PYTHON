@@ -1,0 +1,16 @@
+id: SR_COINMINER
+name: 채굴 풀 통신
+description: 채굴 분류 시그니처 또는 채굴 풀 도메인 문자열.
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  any:
+    - {field: signature_category, op: eq, value: coinminer}
+    - {field: search_text, op: contains_list, value: coinmining_pools}
+min_count: 1
+window: 10m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: low

@@ -1,0 +1,17 @@
+id: SR_COINMINER_REPEAT
+name: 채굴 통신 반복
+description: 1시간 안에 채굴 시그니처 10건 이상 (event_count 합계).
+type: count
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  any:
+    - {field: signature_category, op: eq, value: coinminer}
+    - {field: search_text, op: contains_list, value: coinmining_pools}
+aggregate: {func: count}
+window: 1h
+threshold: 10
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

@@ -1,0 +1,25 @@
+setup:
+  assets: []
+  list_items:
+  - - false_positive_hosts
+    - 10.10.2.13
+alerts:
+- source_id: SC_BRUTEFORCE_SUCCESS
+  entity: 10.10.2.10
+  severity: high
+  case: 대입 공격 10분 뒤 인증 성공
+no_alert:
+- entity: 10.10.2.12
+  case: 임계치 바로 아래 (28건)
+- entity: 10.10.2.11
+  case: 허용 시간 밖 (45분 뒤 인증 성공)
+- entity: 10.10.2.13
+  case: 예외 리스트
+hits:
+  SR_AUTH_BRUTEFORCE:
+  - 10.10.2.10
+  - 10.10.2.11
+  SR_AUTH_SUCCESS:
+  - 10.10.2.10
+  - 10.10.2.11
+  - 10.10.2.12

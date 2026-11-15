@@ -1,0 +1,17 @@
+id: SR_WAF_SRC_SUSTAINED
+name: "[검증] WAF 공격 출발지 지속"
+description: 한 출발지 IP 가 10분 안에 WAF 공격 탐지 1,000건 이상 (event_count 합계). 순간 폭증이 아니라 지속되는 공격 출발지를 가른다.
+type: count
+entity: {type: host, field: src_ip}
+data_tp: [WAF]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: inbound}
+    - {field: attack, op: exists}
+aggregate: {func: count}
+window: 10m
+threshold: 1000
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: high

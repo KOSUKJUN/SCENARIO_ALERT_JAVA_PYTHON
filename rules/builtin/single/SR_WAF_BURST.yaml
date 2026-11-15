@@ -1,0 +1,16 @@
+id: SR_WAF_BURST
+name: WAF 공격 탐지 폭증
+description: 1분 안에 한 서버로 WAF 공격 탐지 300건 이상 (event_count 합계).
+type: count
+entity: {type: host, field: dst_ip}
+data_tp: [WAF]
+filter:
+  all:
+    - {field: attack, op: exists}
+aggregate: {func: count}
+window: 1m
+threshold: 300
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

@@ -1,0 +1,30 @@
+setup:
+  assets: []
+  list_items:
+    -
+      - "false_positive_hosts"
+      - "10.10.8.13"
+alerts:
+  - source_id: "SC_EXPOSED_ADMIN_PORT"
+    entity: "10.10.8.10"
+    severity: "critical"
+    case: "외부 출발지 6개 SSH 접근 + 로그인 성공"
+  - source_id: "SC_EXPOSED_ADMIN_PORT"
+    entity: "10.10.8.11"
+    severity: "medium"
+    case: "외부 출발지 6개 SSH 접근"
+    counterexample: true
+no_alert:
+  - entity: "10.10.8.12"
+    case: "임계치 바로 아래 (출발지 3개)"
+  - entity: "10.10.8.13"
+    case: "예외 리스트"
+  - entity: "10.10.8.14"
+    case: "관리 포트가 아닌 8080 으로 출발지 6개"
+hits:
+  SR_ADMIN_PORT_MULTI_SRC:
+    - "10.10.8.10"
+    - "10.10.8.11"
+  SR_AUTH_SUCCESS:
+    - "10.10.8.10"
+note: "사례: 국내외 IP 에서 TCP/22 접근 시도 → 외부 접근 가능 확인 → 로그인 시도 이력. 12건이라 대입 공격 룰(30건)은 안 걸린다"

@@ -1,0 +1,61 @@
+{
+  "id": "SC_WEB_ATTACK_SUCCESS",
+  "name": "웹 공격 성공 의심",
+  "entity_type": "host",
+  "suppress_for": "6h",
+  "description": "WAF 공격 폭증 뒤 1시간 안에 웹서버가 처음 보는 외부 IP로 접속",
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "start",
+      "pos": [
+        40,
+        120
+      ]
+    },
+    {
+      "id": "n1",
+      "type": "rule",
+      "rule_id": "SR_WAF_BURST",
+      "pos": [
+        200,
+        120
+      ]
+    },
+    {
+      "id": "n2",
+      "type": "rule",
+      "rule_id": "SR_NEW_OUTBOUND",
+      "pos": [
+        440,
+        120
+      ]
+    },
+    {
+      "id": "a1",
+      "type": "alert",
+      "severity": "critical",
+      "title": "웹 공격 성공 의심 (웹쉘·역접속): {{entity}}",
+      "playbook": "웹서버 격리, 웹쉘 점검, 외부 접속 목적지 차단, 접근 로그 채증",
+      "pos": [
+        700,
+        120
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "n0",
+      "to": "n1"
+    },
+    {
+      "from": "n1",
+      "to": "n2",
+      "within": "1h"
+    },
+    {
+      "from": "n2",
+      "to": "a1"
+    }
+  ]
+}

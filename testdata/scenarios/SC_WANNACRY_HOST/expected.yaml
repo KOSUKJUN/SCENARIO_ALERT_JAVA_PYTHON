@@ -1,0 +1,76 @@
+setup:
+  assets:
+    -
+      - "10.10.6.30"
+      -
+        - "legacy_os"
+        - "medical_device"
+    -
+      - "10.10.6.40"
+      -
+        - "fileserver"
+  list_items:
+    -
+      - "false_positive_hosts"
+      - "10.10.6.33"
+alerts:
+  - source_id: "SC_WANNACRY_HOST"
+    entity: "10.10.6.30"
+    severity: "high"
+    case: "킬스위치 접속, 의료장비 자산"
+  - source_id: "SR_WANNACRY_SIG"
+    entity: "10.10.6.30"
+    severity: "high"
+    case: "단독 경보"
+  - source_id: "SC_WANNACRY_HOST"
+    entity: "10.10.6.31"
+    severity: "critical"
+    case: "킬스위치 접속 + 외부 445 다수 접근"
+  - source_id: "SC_SMB_WORM"
+    entity: "10.10.6.31"
+    severity: "critical"
+    case: "외부 445 다수 + WannaCry 확인"
+  - source_id: "SR_WANNACRY_SIG"
+    entity: "10.10.6.31"
+    severity: "high"
+    case: "단독 경보"
+  - source_id: "SC_WANNACRY_HOST"
+    entity: "10.10.6.32"
+    severity: "medium"
+    case: "내부 시그니처, 출발지 일반 PC"
+    counterexample: true
+  - source_id: "SR_WANNACRY_SIG"
+    entity: "10.10.6.32"
+    severity: "high"
+    case: "단독 경보"
+  - source_id: "SC_WANNACRY_HOST"
+    entity: "10.10.6.40"
+    severity: "high"
+    case: "내부 시그니처의 목적지 = 파일서버"
+  - source_id: "SC_WANNACRY_HOST"
+    entity: "10.10.6.35"
+    severity: "medium"
+    case: "외부 목적지 시그니처, 출발지 일반 PC"
+    counterexample: true
+  - source_id: "SR_WANNACRY_SIG"
+    entity: "10.10.6.35"
+    severity: "high"
+    case: "단독 경보"
+no_alert:
+  - entity: "10.10.6.33"
+    case: "예외 리스트"
+  - entity: "203.0.113.90"
+    case: "목적지가 외부 (목적지 기준 룰은 내부 목적지만)"
+  - entity: "10.10.6.36"
+    case: "시그니처 없는 일반 SMB 통신 3건"
+hits:
+  SR_WANNACRY_SIG:
+    - "10.10.6.30"
+    - "10.10.6.31"
+    - "10.10.6.32"
+    - "10.10.6.35"
+  SR_WANNACRY_SIG_DST:
+    - "10.10.6.40"
+  SR_SMB_OUT_FANOUT:
+    - "10.10.6.31"
+note: "사례: 킬스위치 접속 → 감염 확인 / 내부 IP → 파일서버 WannaCry 시그니처"

@@ -1,0 +1,16 @@
+id: SR_TI_HIT
+name: 유해 IP·도메인과 통신
+description: 내부 호스트가 유해 IP 리스트(threat_*)의 IP 또는 유해 도메인과 통신.
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [DDos, DPX, FIREWALL, IDS, IPS, TMS, UTM, WAF]
+filter:
+  any:
+    - {field: dst_ti_hit, op: eq, value: true}
+    - {field: search_text, op: contains_list, value: threat_domains}
+min_count: 1
+window: 5m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

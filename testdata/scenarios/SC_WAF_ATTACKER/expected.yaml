@@ -1,0 +1,34 @@
+setup:
+  assets:
+    -
+      - "10.10.6.20"
+      -
+        - "webserver"
+  list_items:
+    -
+      - "false_positive_hosts"
+      - "203.0.113.53"
+alerts:
+  - source_id: "SC_WAF_ATTACKER"
+    entity: "203.0.113.50"
+    severity: "high"
+    case: "1분 1,100건 → 10분 1,000건 이상 지속"
+  - source_id: "SC_WAF_ATTACKER"
+    entity: "203.0.113.51"
+    severity: "medium"
+    case: "1분 350건, 지속 아님"
+    counterexample: true
+no_alert:
+  - entity: "203.0.113.52"
+    case: "임계치 바로 아래 (250건)"
+  - entity: "203.0.113.53"
+    case: "예외 리스트"
+  - entity: "203.0.113.54"
+    case: "허용 시간 밖 (3분에 걸쳐 402건, 분당 134건)"
+hits:
+  SR_WAF_SRC_BURST:
+    - "203.0.113.50"
+    - "203.0.113.51"
+  SR_WAF_SRC_SUSTAINED:
+    - "203.0.113.50"
+note: "사례: 해외 IP 에서 WAF 공격 999건/분 → 출발지 차단. 서버(10.10.6.20)는 SR_WAF_BURST 히트만 있고 외부 접속이 없어 경보 없음"

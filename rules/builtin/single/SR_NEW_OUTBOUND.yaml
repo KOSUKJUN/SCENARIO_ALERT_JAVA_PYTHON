@@ -1,0 +1,17 @@
+id: SR_NEW_OUTBOUND
+name: 웹서버의 처음 보는 외부 접속
+description: webserver 태그 자산이 처음 보는 외부 IP로 접속 (peer_first_seen 기준, 2단계 기능).
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IPS, TMS]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: outbound}
+    - {field: src_asset_tags, op: has_tag, value: webserver}
+    - {field: new_peer, op: eq, value: true}
+min_count: 1
+window: 10m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

@@ -1,0 +1,17 @@
+id: SR_WANNACRY_SIG
+name: WannaCry 시그니처 또는 킬스위치 접속
+description: WannaCry 분류 시그니처 또는 킬스위치 도메인 문자열이 보이면 단독 경보도 낸다.
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  any:
+    - {field: signature_category, op: eq, value: ransomware_wannacry}
+    - {field: search_text, op: contains_list, value: wannacry_killswitch_domains}
+min_count: 1
+window: 5m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: true
+severity: high
+suppress_for: 6h

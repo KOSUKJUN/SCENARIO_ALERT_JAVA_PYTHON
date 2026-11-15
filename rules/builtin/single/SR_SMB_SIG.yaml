@@ -1,0 +1,15 @@
+id: SR_SMB_SIG
+name: SMB 관리 공유 접근 시그니처
+description: ADMIN$, C$ 등 관리 공유 접근 시그니처 (분류 smb_admin_share).
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  all:
+    - {field: signature_category, op: eq, value: smb_admin_share}
+min_count: 1
+window: 10m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

@@ -1,0 +1,17 @@
+id: SR_ADMIN_PORT_MULTI_SRC
+name: "[검증] 관리 포트로 외부 다수 출발지 접근"
+description: 10분 안에 외부 출발지 IP 5개 이상이 한 내부 서버의 관리 포트(22, 23, 3389, 5900)로 접근. 대입 공격 임계치(30건) 미만이어도 "외부에서 관리 포트가 열려 있음"을 잡는다. 사례 유형 "네트워크침입 / 원격포트 접근 의심".
+type: count
+entity: {type: host, field: dst_ip}
+data_tp: [FIREWALL, IPS, TMS]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: inbound}
+    - {field: dst_port, op: in, value: [22, 23, 3389, 5900]}
+aggregate: {func: distinct_count, field: src_ip}
+window: 10m
+threshold: 5
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

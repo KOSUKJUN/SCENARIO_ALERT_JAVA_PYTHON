@@ -1,0 +1,28 @@
+setup:
+  assets:
+  - - 10.10.4.5
+    - - fileserver
+  list_items:
+  - - false_positive_hosts
+    - 10.10.1.73
+alerts:
+- source_id: SC_SMB_LATERAL
+  entity: 10.10.1.70
+  severity: high
+  case: 내부 445 다수
+- source_id: SC_SMB_LATERAL
+  entity: 10.10.4.5
+  severity: low
+  case: 파일서버
+no_alert:
+- entity: 10.10.1.71
+  case: 임계치 바로 아래 (목적지 9개)
+- entity: 10.10.1.72
+  case: 허용 시간 밖 (40분에 걸쳐 흩어짐)
+- entity: 10.10.1.73
+  case: 예외 리스트
+hits:
+  SR_SMB_IN_FANOUT:
+  - 10.10.1.70
+  SR_SMB_SIG:
+  - 10.10.4.5

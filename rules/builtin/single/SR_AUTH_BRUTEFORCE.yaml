@@ -1,0 +1,19 @@
+id: SR_AUTH_BRUTEFORCE
+name: 인증 포트 대입 공격
+description: 5분 안에 인증 포트(22, 25, 110, 143, 587, 3389)로 들어오는 접속 30건 이상, 또는 대입 공격 분류 시그니처.
+type: count
+entity: {type: host, field: dst_ip}
+data_tp: [FIREWALL, IDS, IPS, TMS]
+filter:
+  any:
+    - all:
+        - {field: net_direction, op: eq, value: inbound}
+        - {field: dst_port, op: in, value: [22, 25, 110, 143, 587, 3389]}
+    - {field: signature_category, op: eq, value: bruteforce}
+aggregate: {func: count}
+window: 5m
+threshold: 30
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

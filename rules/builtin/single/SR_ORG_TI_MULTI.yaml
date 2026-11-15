@@ -1,0 +1,17 @@
+id: SR_ORG_TI_MULTI
+name: "[검증] 기관 내 유해 IP 통신 호스트 다수"
+description: 한 기관에서 1시간 안에 유해 IP 리스트(threat_*)의 IP 와 통신한 내부 출발지 IP 가 2개 이상. 대상은 기관(org_id). 동시다발 감염 판단의 보조 조건.
+type: count
+entity: {type: org, field: org_id}
+data_tp: [DDos, DPX, FIREWALL, IDS, IPS, TMS, UTM]
+filter:
+  all:
+    - {field: dst_ti_hit, op: eq, value: true}
+    - {field: src_internal, op: eq, value: true}
+aggregate: {func: distinct_count, field: src_ip}
+window: 1h
+threshold: 2
+exclude_lists: []
+schedule: 1m
+alert_on_hit: false
+severity: medium

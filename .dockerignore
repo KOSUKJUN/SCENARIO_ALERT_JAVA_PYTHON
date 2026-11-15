@@ -1,0 +1,9 @@
+target
+data
+test-reports
+.git
+.env
+web
+mockcase
+docs
+**/__pycache__

@@ -1,0 +1,17 @@
+id: SR_SMB_OUT_FANOUT
+name: 내부에서 외부 445 다수 접근
+description: 내부 호스트가 10분 안에 외부 IP 다수의 445(SMB) 포트로 접근. 차단(deny, block) 로그도 감염 증거로 센다.
+type: count
+entity: {type: host, field: src_ip}
+data_tp: [FIREWALL, IPS, TMS]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: outbound}
+    - {field: dst_port, op: eq, value: 445}
+aggregate: {func: distinct_count, field: dst_ip}
+window: 10m
+threshold: 20
+exclude_lists: [smb_allowed_sources, false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium

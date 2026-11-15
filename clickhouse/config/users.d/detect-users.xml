@@ -1,0 +1,39 @@
+<clickhouse>
+    <profiles>
+        <!-- 실시간 탐지: 실행 시간 30초, 메모리 상한 -->
+        <detect>
+            <max_execution_time>30</max_execution_time>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <priority>1</priority>
+        </detect>
+        <!-- 백테스트: 낮은 우선순위, 더 낮은 메모리 상한 -->
+        <detect_bt>
+            <max_execution_time>300</max_execution_time>
+            <max_memory_usage>2000000000</max_memory_usage>
+            <priority>10</priority>
+        </detect_bt>
+    </profiles>
+    <users>
+        <detect>
+            <password from_env="CH_PASSWORD"/>
+            <profile>detect</profile>
+            <quota>default</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT SELECT ON codlog.*</query>
+                <query>GRANT SELECT, INSERT, ALTER DELETE, dictGet ON detect.*</query>
+                <query>GRANT SYSTEM RELOAD DICTIONARY ON *.*</query>
+            </grants>
+        </detect>
+        <detect_bt>
+            <password from_env="CH_BT_PASSWORD"/>
+            <profile>detect_bt</profile>
+            <quota>default</quota>
+            <networks><ip>::/0</ip></networks>
+            <grants>
+                <query>GRANT SELECT ON codlog.*</query>
+                <query>GRANT SELECT, INSERT, ALTER DELETE, dictGet ON detect.*</query>
+            </grants>
+        </detect_bt>
+    </users>
+</clickhouse>

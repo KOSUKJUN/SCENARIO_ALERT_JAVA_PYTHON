@@ -1,0 +1,61 @@
+{
+  "id": "SC_BRUTEFORCE_SUCCESS",
+  "name": "대입 공격 후 인증 성공",
+  "entity_type": "host",
+  "suppress_for": "6h",
+  "description": "인증 포트 대입 공격 뒤 30분 안에 인증 성공",
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "start",
+      "pos": [
+        40,
+        120
+      ]
+    },
+    {
+      "id": "n1",
+      "type": "rule",
+      "rule_id": "SR_AUTH_BRUTEFORCE",
+      "pos": [
+        200,
+        120
+      ]
+    },
+    {
+      "id": "n2",
+      "type": "rule",
+      "rule_id": "SR_AUTH_SUCCESS",
+      "pos": [
+        440,
+        120
+      ]
+    },
+    {
+      "id": "a1",
+      "type": "alert",
+      "severity": "high",
+      "title": "대입 공격 후 인증 성공: {{entity}}",
+      "playbook": "해당 계정 비밀번호 변경, 접속 출발지 차단, 메일 발송 이력 확인",
+      "pos": [
+        700,
+        120
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "n0",
+      "to": "n1"
+    },
+    {
+      "from": "n1",
+      "to": "n2",
+      "within": "30m"
+    },
+    {
+      "from": "n2",
+      "to": "a1"
+    }
+  ]
+}

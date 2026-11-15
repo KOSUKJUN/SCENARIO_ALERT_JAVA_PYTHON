@@ -1,0 +1,28 @@
+setup:
+  assets:
+  - - 10.10.1.60
+    - - kiosk
+      - legacy_os
+  list_items:
+  - - false_positive_hosts
+    - 10.10.1.64
+alerts:
+- source_id: SC_REMOTE_SCAN_OUT
+  entity: 10.10.1.60
+  severity: critical
+  case: 키오스크
+- source_id: SC_REMOTE_SCAN_OUT
+  entity: 10.10.1.61
+  severity: high
+  case: 일반 PC
+no_alert:
+- entity: 10.10.1.62
+  case: 임계치 바로 아래 (목적지 9개)
+- entity: 10.10.1.63
+  case: 허용 시간 밖 (24분에 걸쳐 흩어짐)
+- entity: 10.10.1.64
+  case: 예외 리스트
+hits:
+  SR_REMOTE_PORT_FANOUT:
+  - 10.10.1.60
+  - 10.10.1.61

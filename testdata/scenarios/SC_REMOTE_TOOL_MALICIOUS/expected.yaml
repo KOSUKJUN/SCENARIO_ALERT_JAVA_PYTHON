@@ -1,0 +1,42 @@
+setup:
+  assets: []
+  list_items:
+  - - false_positive_hosts
+    - 10.10.1.84
+alerts:
+- source_id: SC_REMOTE_TOOL_MALICIOUS
+  entity: 10.10.1.80
+  severity: high
+  case: 원격도구 + 유해 IP
+- source_id: SC_REMOTE_TOOL_MALICIOUS
+  entity: 10.10.1.81
+  severity: high
+  case: 원격도구 + 악성코드 (or 가지)
+- source_id: SC_REMOTE_TOOL_MALICIOUS
+  entity: 10.10.1.82
+  severity: low
+  case: 원격도구만 (and 가지 하나 부족 → 확인용 낮음 경보)
+  counterexample: true
+- source_id: SC_TI_CONTACT
+  entity: 10.10.1.80
+  severity: low
+  case: 유해 IP 통신 (사례 순서도. 원격도구는 후속 징후 목록에 없어 낮음)
+- source_id: SC_TI_CONTACT
+  entity: 10.10.1.85
+  severity: low
+  case: 유해 IP 통신만 (사례 순서도 낮음. 이 순서도에서는 경보 없음)
+  counterexample: true
+no_alert:
+- entity: 10.10.1.84
+  case: 예외 리스트
+hits:
+  SR_REMOTE_TOOL:
+  - 10.10.1.80
+  - 10.10.1.81
+  - 10.10.1.82
+  SR_TI_HIT:
+  - 10.10.1.80
+  - 10.10.1.85
+  SR_MALWARE_SIG:
+  - 10.10.1.81
+note: 허용 시간(24시간) 밖 반례는 tests/unit/test_evaluator.py 에서 순수 함수로 확인한다

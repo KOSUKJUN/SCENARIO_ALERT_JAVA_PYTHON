@@ -1,0 +1,18 @@
+id: SR_ORG_SMB_OUTBREAK
+name: "[검증] 기관 내 외부 445 접근 호스트 다수 (동시다발)"
+description: 한 기관에서 1시간 안에 외부 445(SMB) 포트로 접근한 내부 출발지 IP 가 3개 이상. 대상이 호스트가 아니라 기관(org_id)이다. 호스트별 임계치(20개 목적지)에 못 미치는 PC 여러 대가 동시에 같은 행위를 하는 사례(PC 4대 동시 감염)를 잡는다.
+type: count
+entity: {type: org, field: org_id}
+data_tp: [FIREWALL, IPS, TMS]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: outbound}
+    - {field: dst_port, op: eq, value: 445}
+    - {field: src_internal, op: eq, value: true}
+aggregate: {func: distinct_count, field: src_ip}
+window: 1h
+threshold: 3
+exclude_lists: []
+schedule: 1m
+alert_on_hit: false
+severity: high
