@@ -125,6 +125,37 @@ export async function request<T>(method: string, path: string, body?: unknown, o
   return data as T;
 }
 
+/** 파일 올리기 (multipart/form-data). ATT&CK 번들처럼 큰 파일에 쓴다. */
+export async function upload<T>(path: string, form: FormData, query?: RequestOptions['query']): Promise<T> {
+  let url = BASE + path;
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  if (qs.toString()) url += '?' + qs.toString();
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers, body: form });
+  } catch {
+    throw new ApiError(0, '서버에 연결할 수 없습니다');
+  }
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    if (res.status === 413) throw new ApiError(413, '파일이 너무 큽니다');
+    throw parseError(res.status, data, `요청 실패 (${res.status})`);
+  }
+  return data as T;
+}
+
 export const api = {
   get: <T>(path: string, query?: RequestOptions['query']) => request<T>('GET', path, undefined, { query }),
   post: <T>(path: string, body?: unknown, query?: RequestOptions['query']) =>

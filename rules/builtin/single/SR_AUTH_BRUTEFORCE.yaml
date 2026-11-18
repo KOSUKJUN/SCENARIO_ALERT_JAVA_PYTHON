@@ -17,3 +17,5 @@ exclude_lists: [false_positive_hosts]
 schedule: 1m
 alert_on_hit: false
 severity: medium
+attack: [T1110]
+d3fend: [D3-ANET, D3-AL, D3-ITF]

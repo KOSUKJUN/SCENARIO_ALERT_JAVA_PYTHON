@@ -15,3 +15,5 @@ schedule: 1m
 alert_on_hit: true
 severity: high
 suppress_for: 6h
+attack: [T1486, T1210]
+d3fend: [D3-NI, D3-RF, D3-SU]

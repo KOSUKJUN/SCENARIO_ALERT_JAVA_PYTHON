@@ -14,3 +14,5 @@ exclude_lists: [false_positive_hosts]
 schedule: 1m
 alert_on_hit: false
 severity: low
+attack: [T1496.001]
+d3fend: [D3-PT, D3-OTF]

@@ -1,5 +1,7 @@
 package com.scenarioalert.engine.scenario;
 
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.common.Json;
 import com.scenarioalert.engine.common.Kst;
 import com.scenarioalert.engine.meta.Fields;
@@ -33,7 +35,7 @@ public final class GraphValidator {
             "asset", Set.of("tags"),
             "and", Set.of("within"),
             "or", Set.of(),
-            "alert", Set.of("severity", "title", "playbook"));
+            "alert", Set.of("severity", "title", "playbook", "attack", "d3fend"));
     static final Set<String> COMMON_NODE_KEYS = Set.of("id", "type", "pos", "label");
     static final Set<String> GRAPH_KEYS = Set.of("id", "name", "description", "entity_type", "status", "suppress_for",
             "nodes", "edges");
@@ -341,6 +343,14 @@ public final class GraphValidator {
                     Object pb = n.get("playbook");
                     if (pb != null && (!(pb instanceof String ps) || ps.length() > 4000)) {
                         res.err("node", nid, "playbook 은 4000자 이하 문자열입니다");
+                    }
+                    String attackErr = AttackService.formatError(n.get("attack"));
+                    if (attackErr != null) {
+                        res.err("node", nid, attackErr);
+                    }
+                    String d3fendErr = D3fendService.formatError(n.get("d3fend"));
+                    if (d3fendErr != null) {
+                        res.err("node", nid, d3fendErr);
                     }
                 }
                 default -> {

@@ -1,5 +1,6 @@
 package com.scenarioalert.engine.api;
 
+import com.scenarioalert.engine.attack.AttackBundle;
 import com.scenarioalert.engine.auth.AuthService.User;
 import com.scenarioalert.engine.auth.RequireRole;
 import com.scenarioalert.engine.ch.ClickHouse;
@@ -55,6 +56,7 @@ public class AlertsController {
                                     @RequestParam(name = "delivery_status", required = false) String deliveryStatus,
                                     @RequestParam(name = "time_from", required = false) String timeFrom,
                                     @RequestParam(name = "time_to", required = false) String timeTo,
+                                    @RequestParam(required = false) String technique,
                                     @RequestParam(defaultValue = "100") int limit,
                                     @RequestParam(defaultValue = "0") int offset) {
         List<String> where = new ArrayList<>(List.of("1=1"));
@@ -92,11 +94,20 @@ public class AlertsController {
             where.add("first_seen <= :tt");
             pr.put("tt", Kst.parse(timeTo));
         }
+        if (technique != null && !technique.isEmpty()) {
+            // ATT&CK 기법 (상위 기법이면 하위 기법 경보도 포함)
+            if (!AttackBundle.TECHNIQUE_ID.matcher(technique).matches()) {
+                throw ApiException.badRequest("기법 ID 형식이 아닙니다: " + technique);
+            }
+            where.add("JSON_SEARCH(attack, 'one', :tech, NULL, '$[*].id') IS NOT NULL");
+            pr.put("tech", technique.contains(".") ? technique : technique + "%");
+        }
         String w = String.join(" AND ", where);
         List<Map<String, Object>> items = db.rows("SELECT alert_id, source_type, source_id, source_version, org_id, entity_type, "
                 + "entity, severity, title, alert_node, first_seen, last_seen, hit_count, silent, delivery_status, "
-                + "delivery_attempts, case_ref, verdict, created_at, upgraded_at FROM alerts WHERE " + w
+                + "delivery_attempts, case_ref, verdict, created_at, upgraded_at, attack FROM alerts WHERE " + w
                 + " ORDER BY created_at DESC LIMIT :n OFFSET :off", pr);
+        items.forEach(a -> a.put("attack", a.get("attack") == null ? List.of() : Json.load(Db.str(a, "attack"))));
         Map<String, Object> total = db.row("SELECT COUNT(*) AS n FROM alerts WHERE " + w, pr);
         return Json.obj("total", total == null ? 0 : Db.lng(total, "n"), "items", items);
     }
@@ -107,6 +118,8 @@ public class AlertsController {
             throw new ApiException(404, "경보가 없습니다");
         }
         a.put("path", Json.load(Db.str(a, "path")));
+        a.put("attack", a.get("attack") == null ? List.of() : Json.load(Db.str(a, "attack")));
+        a.put("d3fend", a.get("d3fend") == null ? List.of() : Json.load(Db.str(a, "d3fend")));
         return a;
     }
 

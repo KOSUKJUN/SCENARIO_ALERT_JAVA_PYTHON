@@ -4,7 +4,9 @@ import { computed, ref } from 'vue';
 import { api, enc } from '../../api';
 import { has, showIncident } from '../../auth';
 import { useAsync } from '../../composables';
+import AttackChips from '../../components/AttackChips.vue';
 import CardBox from '../../components/CardBox.vue';
+import CountermeasuresPanel from '../../components/CountermeasuresPanel.vue';
 import EmptyBox from '../../components/EmptyBox.vue';
 import ErrorBox from '../../components/ErrorBox.vue';
 import FormField from '../../components/FormField.vue';
@@ -106,6 +108,13 @@ const assetVal = (v: unknown) => (Array.isArray(v) ? v.map(String) : cellText(v)
           </div>
           <div class="kv-row"><dt>기관</dt><dd>{{ d.org_id }}</dd></div>
           <div class="kv-row"><dt>대상</dt><dd>{{ d.entity_type }} {{ d.entity }}</dd></div>
+          <div class="kv-row" data-testid="alert-attack">
+            <dt>ATT&amp;CK</dt>
+            <dd>
+              <AttackChips :items="d.attack" />
+              <div v-if="d.attack_version" class="muted small">{{ d.attack_version }} 기준 (경보 생성·상향 때)</div>
+            </dd>
+          </div>
           <div class="kv-row"><dt>최초 / 최종</dt><dd>{{ fmtTime(d.first_seen) }} ~ {{ fmtTime(d.last_seen) }}</dd></div>
           <div class="kv-row"><dt>횟수</dt><dd>{{ d.hit_count }}</dd></div>
           <div class="kv-row"><dt>생성 / 상향</dt><dd>{{ fmtTime(d.created_at) }}{{ d.upgraded_at ? ` / 상향 ${fmtTime(d.upgraded_at)}` : '' }}</dd></div>
@@ -142,9 +151,18 @@ const assetVal = (v: unknown) => (Array.isArray(v) ? v.map(String) : cellText(v)
         <template v-if="d.playbook">
           <h4>대응 절차</h4>
           <p class="playbook">{{ d.playbook }}</p>
+          <p class="muted small">룰·순서도 경보 노드에 작성한 절차입니다. 아래 "대응방책" 에 MITRE D3FEND 기준 지정·권고 대응 기법이 있습니다.</p>
         </template>
       </CardBox>
     </div>
+
+    <CardBox title="대응방책 (MITRE D3FEND)" data-testid="alert-countermeasures">
+      <CountermeasuresPanel
+        :attack="(d.attack ?? []).map((t) => t.id)"
+        :designated="d.d3fend ?? []"
+        :designated-version="d.d3fend_version"
+      />
+    </CardBox>
 
     <CardBox title="지나온 경로">
       <ol class="path-steps" data-testid="alert-path">

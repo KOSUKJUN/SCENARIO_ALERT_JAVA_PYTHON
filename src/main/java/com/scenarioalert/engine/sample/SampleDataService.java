@@ -1,5 +1,6 @@
 package com.scenarioalert.engine.sample;
 
+import com.scenarioalert.engine.InitService;
 import com.scenarioalert.engine.auth.AuthService;
 import com.scenarioalert.engine.ch.ClickHouse;
 import com.scenarioalert.engine.ch.ClickHouse.Purpose;
@@ -27,15 +28,85 @@ import static com.scenarioalert.engine.common.Db.p;
  * 테스트용 샘플 데이터 (개발·테스트 환경 전용. 운영 ClickHouse 에서 실행하지 않는다).
  * <ul>
  * <li>기준 데이터: 기관 3곳(두 기관은 내부 대역이 겹침), 자산·태그, 리스트, 시그니처 분류 매핑, 사용자</li>
- * <li>이벤트: codlog.log_integrated_success_all 에 정상 트래픽 + 시나리오별 공격 패턴 + 반례</li>
+ * <li>이벤트: default.log_integrated_success_store 에 정상 트래픽 + 시나리오별 공격 패턴 + 반례</li>
  * <li>실제 기관명·IP 는 쓰지 않는다. 문서용 대역(192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)과 사설 대역만 쓴다.</li>
  * </ul>
  */
 @Component
 public class SampleDataService {
-    public static final List<String> COLUMNS = List.of("event_id", "mgr_time", "event_time", "inst_id", "data_tp", "log",
-            "product", "s_info", "d_info", "s_port", "d_port", "protocol", "action", "mstatus", "direction", "method",
-            "attack", "risk", "count", "uri", "url_method", "payload");
+    /**
+     * 운영 원본 컬럼 (clickhouse/source/001, 운영 default.log_integrated_success_all 과 같다).
+     * fields(JSON) 키: count, risk, url_method, action, mstatus, direction, log, product, uri, payload ... (값은 문자열).
+     */
+    public static final List<String> COLUMNS = List.of("_event_cd", "_parser_cd", "_data_type", "_asset_id", "_collect_time",
+            "_raw_log", "_origin_topic", "_parser_node", "event_time", "event_type", "origin_ip", "origin_id", "origin_name",
+            "src_ip", "src_port", "src_iso", "src_lat", "src_lng", "dst_ip", "dst_port", "protocol", "attack", "category",
+            "method", "fields");
+    private static final Set<String> IP_COLUMNS = Set.of("src_ip", "dst_ip", "origin_ip");
+    private static final Set<String> NULLABLE_TEXT = Set.of("event_type", "origin_id", "origin_name", "src_iso", "src_lat",
+            "src_lng", "protocol", "attack", "category", "method");
+
+    /**
+     * 테스트용 로그 수집원 ID (운영의 _asset_id 자리). 기관·데이터 유형마다 하나. 기관은 log_sources 매핑으로 정해진다.
+     * 실제 운영 수집원 값은 쓰지 않는다.
+     */
+    public static String assetId(String org, String dtp) {
+        return org + "_" + dtp + "_LOGSRC";
+    }
+
+    /**
+     * 이벤트 한 행을 운영 원본 모양으로 맞춘다. 없는 값은 NULL (운영과 같다), 빈 문자열도 NULL.
+     * _event_cd·_parser_cd·_origin_topic·_parser_node·_raw_log 는 비어 있으면 테스트 값으로 채운다.
+     * fields 는 빈 값을 빼고 값을 문자열로 바꾼 객체로 넣는다 (JSON 타입 컬럼).
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> toRow(Map<String, Object> e) {
+        String dtp = String.valueOf(e.get("_data_type"));
+        Map<String, Object> f = new LinkedHashMap<>();
+        if (e.get("fields") instanceof Map<?, ?> fm) {
+            ((Map<String, Object>) fm).forEach((k, x) -> {
+                if (x != null && !String.valueOf(x).isEmpty()) {
+                    f.put(k, String.valueOf(x));
+                }
+            });
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        for (String c : COLUMNS) {
+            Object v = e.get(c);
+            if (v instanceof String s && s.isEmpty()) {
+                v = null;
+            }
+            switch (c) {
+                case "_event_cd" -> v = v == null ? UUID.randomUUID().toString() : v;
+                case "_parser_cd" -> v = v == null ? "test-parser-" + dtp.toLowerCase() : v;
+                case "_origin_topic" -> v = v == null ? "test_" + dtp.toLowerCase() : v;
+                case "_parser_node" -> v = v == null ? "test-node" : v;
+                case "_raw_log" -> v = v == null ? rawLog(e, f) : v;
+                case "fields" -> v = f;
+                default -> {
+                    if (IP_COLUMNS.contains(c) && v != null) {
+                        v = v6(String.valueOf(v));
+                    } else if (NULLABLE_TEXT.contains(c) && v != null) {
+                        v = String.valueOf(v);
+                    }
+                }
+            }
+            r.put(c, v);
+        }
+        return r;
+    }
+
+    /** 테스트용 원문 (운영 _raw_log 자리). 탐지는 원문을 쓰지 않는다. */
+    private static String rawLog(Map<String, Object> e, Map<String, Object> f) {
+        StringBuilder b = new StringBuilder("type=").append(e.get("_data_type"));
+        for (String k : List.of("src_ip", "src_port", "dst_ip", "dst_port", "protocol", "method", "attack")) {
+            if (e.get(k) != null && !String.valueOf(e.get(k)).isEmpty()) {
+                b.append(' ').append(k).append('=').append(e.get(k));
+            }
+        }
+        f.forEach((k, x) -> b.append(' ').append(k).append('=').append(x));
+        return b.toString();
+    }
 
     // ---------------------------------------------------------------- 기준 데이터
     record Org(String id, String name, List<String> cidrs) {
@@ -80,6 +151,14 @@ public class SampleDataService {
                     List.<String[]>of(it("iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com"), it("ifferfsodp9ifjaposdfjhgosurijfaewrwergwea.com"))),
             new ListDef("coinmining_pools", "domain", "채굴 풀 도메인", List.<String[]>of(it("pool.minexmr.example"), it("xmr-pool.invalid"))),
             new ListDef("false_positive_hosts", "ip", "오탐 처리된 대상 (경보 화면에서 추가)", List.<String[]>of()),
+            // PHP2Shell (CVE-2026-109618/109619, 2026-10). 공개 분석에 나온 요청·응답 표지. 대소문자 무시 부분 일치.
+            new ListDef("php2shell_request_markers", "string", "PHP2Shell 공격 요청 표지 (업로드 진행 세션 필드, 스캐너 표지, 명령 실행 구문)",
+                    List.<String[]>of(it("PHP_SESSION_UPLOAD_PROGRESS"), it("php2shell"), it("P2SFNAME"), it("P2SVALUE"),
+                            it("sess_p2sopchain"), it("system(base64_decode("))),
+            new ListDef("web_cmd_output_markers", "string", "웹 응답의 명령 실행 성공 표지 (공격 도구 출력)",
+                    List.<String[]>of(it("PHP2SHELL_CONFIRMED"))),
+            new ListDef("web_downloader_markers", "string", "내려받기 도구 요청 표지 (웹서버 외부 요청에서 보면 의심)",
+                    List.<String[]>of(it("Wget/"), it("curl/"), it("python-requests/"), it("busybox wget"))),
             new ListDef("signature_map", "signature_map", "시그니처 분류 매핑 (데이터유형|시그니처명 → 분류)", List.of(
                     it("*|ET EXPLOIT Possible ETERNALBLUE MS17-010", "ransomware_wannacry"),
                     it("*|WannaCry Ransomware SMB Propagation", "ransomware_wannacry"),
@@ -103,7 +182,11 @@ public class SampleDataService {
                     it("*|BitTorrent DHT Ping", "p2p"),
                     it("*|HISC_원격제어 프로그램 탐지", "remote_tool"),
                     it("*|암호화폐 채굴 악성코드 감염 탐지", "coinminer"),
-                    it("*|SSH Login Successful", "auth_success"))));
+                    it("*|SSH Login Successful", "auth_success"),
+                    // PHP2Shell: 장비 탐지명 예시. 운영 장비의 실제 탐지명으로 이 리스트에 추가한다.
+                    it("*|PHP2Shell Upload Progress Use-After-Free (CVE-2026-109619)", "php2shell"),
+                    it("*|PHP2Shell OOM Remote Code Execution (CVE-2026-109618)", "php2shell"),
+                    it("*|PHP Session Upload Progress Exploit Attempt", "php2shell"))));
 
     static final String[][] USERS = {{"admin", "admin123", "admin"}, {"author", "author123", "author"},
             {"analyst", "analyst123", "analyst"}, {"viewer", "viewer123", "viewer"}};
@@ -133,6 +216,16 @@ public class SampleDataService {
             }
             for (Asset a : ASSETS) {
                 asset(a.org(), a.ip(), a.purpose(), a.os(), a.sensitive(), a.tags(), "import");
+            }
+            // 매핑 없는 수집원이 모이는 기관 (Flyway V4 가 넣지만 테스트 초기화가 기관을 모두 지우므로 다시 확인)
+            db.execute("INSERT IGNORE INTO orgs (org_id, name, enabled) VALUES ('UNASSIGNED', '미지정 (로그 수집원 매핑 없음)', TRUE)",
+                    Map.of());
+            // 로그 수집원 → 기관 (테스트 수집원: 기관 × 데이터 유형). 관리자가 바꾼 매핑은 덮어쓰지 않는다
+            for (Org o : ORGS) {
+                for (String dtp : PRODUCTS.keySet()) {
+                    db.execute("INSERT IGNORE INTO log_sources (asset_id, org_id, description, updated_by) VALUES (:a, :o, :d, 'system')",
+                            p("a", assetId(o.id(), dtp), "o", o.id(), "d", "[테스트] " + o.name() + " " + dtp));
+                }
             }
             for (ListDef l : LISTS) {
                 db.execute("INSERT INTO lists (list_id, kind, scope_org_id, description) VALUES (:l, :k, NULL, :d) "
@@ -211,34 +304,41 @@ public class SampleDataService {
         }
         boolean aptLike = dtp.equals("APT") || dtp.equals("WFILTER");
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("event_id", UUID.randomUUID().toString());
-        m.put("mgr_time", Kst.fmt(mgr));
-        m.put("event_time", dtp.equals("APT") ? null : Kst.fmt(t));
-        m.put("inst_id", org);
-        m.put("data_tp", dtp);
-        m.put("log", dtp.toLowerCase());
-        m.put("product", PRODUCTS.get(dtp));
-        m.put("s_info", v6(src));
-        m.put("d_info", v6(dst));
-        m.put("s_port", HAS_SPORT.contains(dtp) ? (e.sport != null ? e.sport : 30000 + r.nextInt(35001)) : null);
-        m.put("d_port", HAS_DPORT.contains(dtp) ? e.dport : null);
+        m.put("_collect_time", Kst.fmt(mgr));
+        m.put("event_time", dtp.equals("APT") ? null : Kst.fmt(t));  // APT 는 장비 시각 없음 -> 수집 시각
+        m.put("_data_type", dtp);
+        m.put("_asset_id", assetId(org, dtp));                        // 기관은 log_sources 매핑으로 정해진다
+        m.put("attack", NO_ATTACK.contains(dtp) ? null : e.attack);
+        m.put("method", NO_METHOD.contains(dtp) ? null : e.method);
         m.put("protocol", e.protocol);
-        m.put("action", aptLike ? "" : e.action);
-        m.put("mstatus", aptLike ? e.action : "");
-        m.put("direction", NO_DIRECTION.contains(dtp) ? "" : e.direction);
-        m.put("method", NO_METHOD.contains(dtp) ? "" : e.method);
-        m.put("attack", NO_ATTACK.contains(dtp) ? "" : e.attack);
-        m.put("risk", e.risk);
-        m.put("count", NO_COUNT.contains(dtp) ? null : (e.count != null ? e.count : 1));
-        m.put("uri", e.uri);
-        m.put("url_method", e.urlMethod);
-        m.put("payload", HAS_PAYLOAD.contains(dtp) ? e.payload : "");
-        return m;
+        m.put("src_ip", src);
+        m.put("src_port", HAS_SPORT.contains(dtp) ? (e.sport != null ? e.sport : 30000 + r.nextInt(35001)) : null);
+        m.put("dst_ip", dst);
+        m.put("dst_port", HAS_DPORT.contains(dtp) ? e.dport : null);
+        m.put("origin_id", "DEV-" + org + "-" + dtp);
+        m.put("origin_name", PRODUCTS.get(dtp));
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("count", NO_COUNT.contains(dtp) ? null : (e.count != null ? e.count : 1));  // 운영처럼 fields 안의 문자열
+        f.put("log", dtp.toLowerCase());
+        f.put("product", PRODUCTS.get(dtp));
+        f.put("action", aptLike ? "" : e.action);
+        f.put("mstatus", aptLike ? e.action : "");
+        f.put("direction", NO_DIRECTION.contains(dtp) ? "" : e.direction);
+        f.put("risk", e.risk);
+        f.put("uri", e.uri);
+        f.put("url_method", e.urlMethod);
+        f.put("payload", HAS_PAYLOAD.contains(dtp) ? e.payload : "");
+        m.put("fields", f);
+        return toRow(m);
     }
 
+    /**
+     * 테스트 이벤트 적재. 노드의 store 테이블에 바로 넣는다: Distributed 적재는 기본이 비동기라 넣은 직후 조회하면 아직 안 보일 수 있다.
+     * (운영 적재는 수집 파이프라인이 한다. 이 함수는 개발·테스트 전용)
+     */
     public int insertEvents(List<Map<String, Object>> rows) {
         for (int i = 0; i < rows.size(); i += 20000) {
-            ch.insert("codlog.log_integrated_success_all", COLUMNS, rows.subList(i, Math.min(rows.size(), i + 20000)), Purpose.ADMIN);
+            ch.insert(InitService.SOURCE_STORE, COLUMNS, rows.subList(i, Math.min(rows.size(), i + 20000)), Purpose.ADMIN);
         }
         return rows.size();
     }
@@ -437,6 +537,38 @@ public class SampleDataService {
                 .method("SMB IPC$ Share Unicode Access-1").payload("\\\\10.10.4.31\\IPC$").risk("medium"), r));
     }
 
+    /**
+     * PHP2Shell 공격 요청 1건 (외부 → 서버). scanner=false 면 WAF 탐지명(분류 매핑), true 면 IPS 가 본 스캐너 요청(문자열 표지).
+     * 페이로드 모양은 공개 분석(업로드 진행 세션 필드 + t[] 패딩 멀티파트)을 따랐다.
+     */
+    static List<Map<String, Object>> php2shellExploit(LocalDateTime t0, String attacker, String server, String org, Random r,
+                                                       boolean scanner) {
+        if (scanner) {
+            return List.of(ev(org, "IPS", t0, attacker, server, o().dport(443).dir("inbound").action("detect")
+                    .method("HTTP POST Multipart Upload").attack("Suspicious File Upload").uri("/").urlMethod("POST")
+                    .payload("POST / HTTP/1.1 User-Agent: php2shell-scan/109618 Content-Type: multipart/form-data "
+                            + "name=\"PHP_SESSION_UPLOAD_PROGRESS\" P2SFNAME P2SVALUE").risk("high"), r));
+        }
+        return List.of(ev(org, "WAF", t0, attacker, server, o().dir("inbound").action("detect")
+                .method("PHP2Shell Upload Progress Use-After-Free (CVE-2026-109619)").attack("Remote Code Execution")
+                .uri("/index.php").urlMethod("POST")
+                .payload("POST /index.php Content-Type: multipart/form-data name=\"PHP_SESSION_UPLOAD_PROGRESS\" t[]=AAAA t[]=AAAA")
+                .risk("high"), r));
+    }
+
+    /** 서버 → 공격자 응답에 명령 실행 결과 (id 출력 + 도구 성공 표지). */
+    static List<Map<String, Object>> webCmdOutput(LocalDateTime t0, String server, String attacker, String org, Random r) {
+        return List.of(ev(org, "IDS", t0, server, attacker, o().dir("outbound").action("alert")
+                .method("HTTP Response Command Output")
+                .payload("HTTP/1.1 200 OK PHP2SHELL_CONFIRMED uid=33(www-data) gid=33(www-data) groups=33(www-data)").risk("high"), r));
+    }
+
+    /** 웹서버가 외부에서 2단계 파일을 Wget 으로 내려받는다. */
+    static List<Map<String, Object>> webDownload(LocalDateTime t0, String server, String dst, String org, Random r) {
+        return List.of(ev(org, "IPS", t0, server, dst, o().dport(80).dir("outbound").action("allow").method("HTTP GET")
+                .payload("GET /nfs-setup HTTP/1.1 Host: dl.example User-Agent: Wget/1.21.4").risk("medium"), r));
+    }
+
     record Scenario(String key, String title, String expect, String host, List<String> tags) {
     }
 
@@ -482,6 +614,12 @@ public class SampleDataService {
                     List.of()),
             new Scenario("remote_tool_only", "[사례] AnyDesk 통신만 (악성 징후 없음)", "SC_REMOTE_TOOL_MALICIOUS 낮음", "10.10.1.86", List.of()),
             new Scenario("smb_ipc_kiosk", "[사례] 안내기의 SMB IPC$ 공유 접근", "SC_SMB_LATERAL 높음", "10.10.1.74", List.of("kiosk", "legacy_os")),
+            new Scenario("php2shell_rce", "[사례] PHP2Shell 공격 + 응답에 명령 실행 결과", "SC_PHP2SHELL 긴급", "10.10.3.24",
+                    List.of("webserver")),
+            new Scenario("php2shell_download", "[사례] PHP2Shell 스캔 + 웹서버 외부 내려받기(Wget)", "SC_PHP2SHELL 긴급", "10.10.3.25",
+                    List.of("webserver")),
+            new Scenario("php2shell_attempt", "[사례] 웹서버 대상 PHP2Shell 공격 시도만", "SC_PHP2SHELL 높음", "10.10.3.26",
+                    List.of("webserver")),
             new Scenario("neg_p2p_below", "반례: 토렌트 포트 3건 (임계치 5 미만)", "경보 없음", "10.10.7.22", List.of()),
             new Scenario("neg_admin_port_few", "반례: 외부 출발지 3개의 SSH 접근 (임계치 5 미만)", "경보 없음", "10.10.8.12", List.of()));
 
@@ -549,6 +687,16 @@ public class SampleDataService {
             }
             case "remote_tool_only" -> out.addAll(remoteTool(t0, host, org, r));
             case "smb_ipc_kiosk" -> out.addAll(smbIpcSig(t0, host, org, r));
+            case "php2shell_rce" -> {
+                String attacker = "203.0.113." + (120 + r.nextInt(10));
+                out.addAll(php2shellExploit(t0, attacker, host, org, r, false));
+                out.addAll(webCmdOutput(t0.plus(gap.dividedBy(2)), host, attacker, org, r));
+            }
+            case "php2shell_download" -> {
+                out.addAll(php2shellExploit(t0, "203.0.113." + (120 + r.nextInt(10)), host, org, r, true));
+                out.addAll(webDownload(t0.plus(gap), host, "198.51.100." + (201 + r.nextInt(49)), org, r));
+            }
+            case "php2shell_attempt" -> out.addAll(php2shellExploit(t0, "203.0.113." + (120 + r.nextInt(10)), host, org, r, false));
             case "neg_p2p_below" -> out.addAll(p2p(t0, host, org, r, 3));
             case "neg_admin_port_few" -> out.addAll(adminPortMulti(t0, host, org, r, 3));
             case "neg_below_threshold" -> out.addAll(smbOut(t0, host, org, r, 19, false));

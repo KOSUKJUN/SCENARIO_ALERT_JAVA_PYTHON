@@ -1,6 +1,8 @@
 package com.scenarioalert.engine.it;
 
 import com.scenarioalert.engine.InitService;
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.ModeRunner;
 import com.scenarioalert.engine.backtest.BacktestService;
 import com.scenarioalert.engine.ch.ClickHouse;
@@ -36,6 +38,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -63,6 +66,8 @@ class AcceptanceIT {
     @Autowired ModeRunner modes;
     @Autowired BacktestService backtests;
     @Autowired ScenarioCodeStore codeStore;
+    @Autowired AttackService attack;
+    @Autowired D3fendService d3fend;
 
     LocalDateTime base;
     LocalDateTime end;
@@ -98,7 +103,7 @@ class AcceptanceIT {
     @BeforeAll
     void bigRun() {
         init.waitReady(120);
-        ItSupport.resetAll(db, ch, init, samples, "active");
+        ItSupport.resetAll(db, ch, init, samples, attack, d3fend, "active");
         base = ItSupport.baseTime();
         end = base.plusMinutes(ItSupport.TIMELINE_MIN);
         for (String sid : scenarios()) {
@@ -127,7 +132,7 @@ class AcceptanceIT {
         for (String line : com.scenarioalert.engine.TestFiles.read(ItSupport.SCENARIO_DIR.resolve(sid).resolve("events.jsonl")).split("\n")) {
             if (!line.isBlank()) {
                 Map<String, Object> e = Json.loadMap(line);
-                for (String k : List.of("s_info", "d_info")) {
+                for (String k : List.of("src_ip", "dst_ip")) {
                     if (e.get(k) != null) {
                         ips.add(String.valueOf(e.get(k)));
                     }
@@ -142,7 +147,7 @@ class AcceptanceIT {
     void everyScenarioHasGeneratedPythonCode() {
         List<Map<String, Object>> vs = db.rows("SELECT v.scenario_id, v.version, v.python_code, v.code_sha256 FROM scenarios s "
                 + "JOIN scenario_versions v ON v.scenario_id=s.scenario_id AND v.version=s.current_version", Map.of());
-        assertEquals(13, vs.size());   // 원본 7 + 사고 사례 6 (docs/cases.md)
+        assertEquals(14, vs.size());   // 원본 7 + 사고 사례 6 + PHP2Shell 1 (docs/cases.md)
         for (Map<String, Object> v : vs) {
             String code = Db.str(v, "python_code");
             assertTrue(code.contains("SCENARIO_ID = \"" + v.get("scenario_id") + "\""));
@@ -155,7 +160,7 @@ class AcceptanceIT {
     // ------------------------------------------------------------------ M3
     @Test
     void sevenScenariosPresent() {
-        assertEquals(13, scenarios().size());   // testdata/scenarios 디렉터리 수 (원본 7 + 사례 6)
+        assertEquals(14, scenarios().size());   // testdata/scenarios 디렉터리 수 (원본 7 + 사례 6 + PHP2Shell 1)
     }
 
     @ParameterizedTest(name = "{0}")
@@ -168,6 +173,101 @@ class AcceptanceIT {
                     + " 경보 " + got.size() + "건 (기대 1건)");
             assertEquals(exp.get("severity"), got.get(0).get("severity"), sid + " / " + exp.get("case"));
         }
+    }
+
+    // ------------------------------------------------------------------ ATT&CK
+    Map<String, Object> alertOf(String source, String entity) {
+        return alerts.stream().filter(a -> source.equals(a.get("source_id")) && entity.equals(a.get("entity"))).findFirst()
+                .orElseThrow(() -> new AssertionError("경보 없음: " + source + " " + entity));
+    }
+
+    @SuppressWarnings("unchecked")
+    static Set<String> attackIds(Map<String, Object> a) {
+        Set<String> ids = new TreeSet<>();
+        if (a.get("attack") != null) {
+            for (Object o : Json.asList(Json.load(Db.str(a, "attack")))) {
+                ids.add((String) ((Map<String, Object>) o).get("id"));
+            }
+        }
+        return ids;
+    }
+
+    @SuppressWarnings("unchecked")
+    static Set<String> d3fendIds(Map<String, Object> a) {
+        Set<String> ids = new TreeSet<>();
+        if (a.get("d3fend") != null) {
+            for (Object o : Json.asList(Json.load(Db.str(a, "d3fend")))) {
+                ids.add((String) ((Map<String, Object>) o).get("id"));
+            }
+        }
+        return ids;
+    }
+
+    /** 지정 대응방책(D3FEND) = 경보 노드의 d3fend + 경로에서 성립한 룰의 d3fend. 이름·전술·버전을 경보에 함께 저장하고 단계가 늘면 누적한다. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void alertsCarryD3fendSnapshot() {
+        // 실행 성공(a1): 경보 노드(격리·종료·차단·패치·프로세스 분석) + 공격 룰(차단·패치) + 명령 결과 룰(종료·프로세스 분석)
+        // + 먼저 만든 공격 경보(a3 높음)의 대응방책(애플리케이션 강화 D3-AH): 높음 → 긴급 상향 때 누적한다
+        Map<String, Object> rce = alertOf("SC_PHP2SHELL", "10.10.11.10");
+        assertEquals(Set.of("D3-AH", "D3-ITF", "D3-NI", "D3-PSA", "D3-PT", "D3-SU"), d3fendIds(rce));
+        assertEquals("D3FEND 1.6.0", rce.get("d3fend_version"));
+        Map<String, Object> pt = ((List<Map<String, Object>>) (List<?>) Json.asList(Json.load(Db.str(rce, "d3fend")))).stream()
+                .filter(m -> "D3-PT".equals(m.get("id"))).findFirst().orElseThrow();
+        assertEquals("Process Termination", pt.get("name"));
+        assertEquals("Evict", pt.get("tactic"));
+        // 실행 → 도구 반입 (같은 긴급 등급, 억제 시간 안): 도구 반입 단계의 대응방책(파일 퇴출·외부 차단·무결성 감시)이 더해진다
+        assertTrue(d3fendIds(alertOf("SC_PHP2SHELL", "10.10.11.19")).containsAll(Set.of("D3-NI", "D3-PT", "D3-FEV", "D3-OTF", "D3-FIM")));
+        // 단일룰 단독 경보
+        assertEquals(Set.of("D3-NI", "D3-RF", "D3-SU"), d3fendIds(alertOf("SR_WANNACRY_SIG", "10.10.6.30")));
+        // 지정 대응방책이 없는 경로: 비워 둔다
+        Map<String, Object> p2p = alertOf("SC_P2P_USAGE", "10.10.7.21");
+        assertNull(p2p.get("d3fend"));
+        assertNull(p2p.get("d3fend_version"));
+    }
+
+    /** 경보의 ATT&CK 기법 = 경보 노드의 attack + 경로에서 성립한 룰의 attack. 이름·전술·버전을 경보에 함께 저장한다. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void alertsCarryAttackSnapshot() {
+        // 응답에 명령 실행 결과: PHP2Shell 공격(T1190) + 명령 결과 룰(T1059.004, T1033, T1082). 높음 → 긴급 상향 때 다시 저장
+        Map<String, Object> rce = alertOf("SC_PHP2SHELL", "10.10.11.10");
+        assertEquals(Set.of("T1190", "T1059.004", "T1033", "T1082"), attackIds(rce));
+        assertEquals("a1", rce.get("alert_node"));
+        assertEquals("enterprise-attack 20.1", rce.get("attack_version"));
+        Map<String, Object> t1190 = ((List<Map<String, Object>>) (List<?>) Json.asList(Json.load(Db.str(rce, "attack")))).stream()
+                .filter(m -> "T1190".equals(m.get("id"))).findFirst().orElseThrow();
+        assertEquals("Exploit Public-Facing Application", t1190.get("name"));
+        assertEquals("TA0001", ((Map<String, Object>) ((List<Object>) t1190.get("tactics")).get(0)).get("id"));
+        // 내려받기: 공격 + 도구 반입(T1105) + 같은 내려받기가 처음 보는 외부 접속(T1071)이기도 하다 — 성립한 가지의 기법만
+        Set<String> dl = attackIds(alertOf("SC_PHP2SHELL", "10.10.11.11"));
+        assertEquals(Set.of("T1190", "T1105", "T1071"), dl);
+
+        // v2 ATT&CK 단계 누적: 같은 등급(긴급)의 다음 단계가 억제 시간 안에 보이면 경보의 기법이 늘어난다 (순서 무관)
+        Set<String> chain = Set.of("T1190", "T1059.004", "T1033", "T1082", "T1105", "T1071");
+        Map<String, Object> c19 = alertOf("SC_PHP2SHELL", "10.10.11.19");   // 실행·정찰 → 도구 반입
+        assertEquals(chain, attackIds(c19));
+        assertEquals("a1", c19.get("alert_node"), "경보 노드·제목은 먼저 성립한 단계 그대로");
+        Map<String, Object> c20 = alertOf("SC_PHP2SHELL", "10.10.11.20");   // 도구 반입 → 실행·정찰
+        assertEquals(chain, attackIds(c20));
+        // uname -a 결과만 (T1082 정찰) 으로도 실행 성공
+        Map<String, Object> c21 = alertOf("SC_PHP2SHELL", "10.10.11.21");
+        assertEquals(Set.of("T1190", "T1059.004", "T1033", "T1082"), attackIds(c21));
+        // 내려받기 표지 없는 처음 보는 외부 접속: C2 가지 (a5)
+        Map<String, Object> c22 = alertOf("SC_PHP2SHELL", "10.10.11.22");
+        assertEquals("a5", c22.get("alert_node"));
+        assertEquals(Set.of("T1190", "T1071"), attackIds(c22));
+        assertTrue(Db.str(c22, "title").contains("[초기 침투 → C2]"), Db.str(c22, "title"));
+        // 공격만 (높음): 공격 룰의 기법만
+        assertEquals(Set.of("T1190"), attackIds(alertOf("SC_PHP2SHELL", "10.10.11.12")));
+        // 경보 노드에 단 기법(T1505.003) + 경로의 룰 기법
+        assertEquals(Set.of("T1505.003", "T1190", "T1595.002", "T1071"), attackIds(alertOf("SC_WEB_ATTACK_SUCCESS", "10.10.3.20")));
+        // 단일룰 단독 경보
+        assertEquals(Set.of("T1486", "T1210"), attackIds(alertOf("SR_WANNACRY_SIG", "10.10.6.30")));
+        // 기법이 없는 룰만 거친 경보는 비워 둔다 (P2P 는 정책 위반이라 ATT&CK 매핑 없음)
+        Map<String, Object> p2p = alertOf("SC_P2P_USAGE", "10.10.7.21");
+        assertNull(p2p.get("attack"));
+        assertNull(p2p.get("attack_version"));
     }
 
     @ParameterizedTest(name = "{0}")

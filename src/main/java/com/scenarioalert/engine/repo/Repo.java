@@ -1,5 +1,7 @@
 package com.scenarioalert.engine.repo;
 
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.common.ApiException;
 import com.scenarioalert.engine.common.Db;
 import com.scenarioalert.engine.common.Json;
@@ -43,10 +45,14 @@ public class Repo {
     private static final Logger log = LoggerFactory.getLogger(Repo.class);
     private final Db db;
     private final ScenarioCodeStore codeStore;
+    private final AttackService attack;
+    private final D3fendService d3fend;
 
-    public Repo(Db db, ScenarioCodeStore codeStore) {
+    public Repo(Db db, ScenarioCodeStore codeStore, AttackService attack, D3fendService d3fend) {
         this.db = db;
         this.codeStore = codeStore;
+        this.attack = attack;
+        this.d3fend = d3fend;
     }
 
     // ---------------------------------------------------------------- 리스트
@@ -104,6 +110,25 @@ public class Repo {
     public RuleCheck checkRule(Object defn) {
         RuleValidator.Result vr = RuleValidator.validate(defn, listExists());
         if (vr.parsed() == null) {
+            return new RuleCheck(vr.validation(), null, null);
+        }
+        // ATT&CK 기법이 활성 버전에 있는지 (없거나 폐기면 오류, 사용 중단이면 경고)
+        attack.checkRefs(vr.parsed().raw().get("attack"), (isErr, msg) -> {
+            if (isErr) {
+                vr.validation().err("attack", msg);
+            } else {
+                vr.validation().warn("attack", msg);
+            }
+        });
+        // 지정 대응방책(D3FEND 기법)이 활성 버전에 있는지
+        d3fend.checkRefs(vr.parsed().raw().get("d3fend"), (isErr, msg) -> {
+            if (isErr) {
+                vr.validation().err("d3fend", msg);
+            } else {
+                vr.validation().warn("d3fend", msg);
+            }
+        });
+        if (!vr.validation().ok()) {
             return new RuleCheck(vr.validation(), null, null);
         }
         try {
@@ -200,7 +225,35 @@ public class Repo {
     }
 
     public GraphValidation checkGraph(Object graph, List<String> requireStatus) {
-        return GraphValidator.validate(graph, ruleRefLookup(), requireStatus);
+        GraphValidation res = GraphValidator.validate(graph, ruleRefLookup(), requireStatus);
+        // 경보 노드의 ATT&CK 기법이 활성 버전에 있는지
+        Map<String, Object> g = Json.asMap(graph);
+        if (g != null) {
+            for (Object o : Json.asList(g.get("nodes"))) {
+                Map<String, Object> n = Json.asMap(o);
+                if (n != null && "alert".equals(n.get("type")) && AttackService.formatError(n.get("attack")) == null) {
+                    String nid = String.valueOf(n.get("id"));
+                    attack.checkRefs(n.get("attack"), (isErr, msg) -> {
+                        if (isErr) {
+                            res.err("node", nid, msg);
+                        } else {
+                            res.warn("node", nid, msg);
+                        }
+                    });
+                }
+                if (n != null && "alert".equals(n.get("type")) && D3fendService.formatError(n.get("d3fend")) == null) {
+                    String nid = String.valueOf(n.get("id"));
+                    d3fend.checkRefs(n.get("d3fend"), (isErr, msg) -> {
+                        if (isErr) {
+                            res.err("node", nid, msg);
+                        } else {
+                            res.warn("node", nid, msg);
+                        }
+                    });
+                }
+            }
+        }
+        return res;
     }
 
     public GraphValidation checkGraph(Object graph) {

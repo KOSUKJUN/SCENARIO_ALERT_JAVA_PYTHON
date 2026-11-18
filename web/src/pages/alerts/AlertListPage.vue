@@ -5,6 +5,7 @@ import { useRoute, useRouter, type LocationQuery } from 'vue-router';
 import { api } from '../../api';
 import { showIncident } from '../../auth';
 import { useAsync } from '../../composables';
+import AttackChips from '../../components/AttackChips.vue';
 import EmptyBox from '../../components/EmptyBox.vue';
 import ErrorBox from '../../components/ErrorBox.vue';
 import LoadingBox from '../../components/LoadingBox.vue';
@@ -24,8 +25,9 @@ interface Filters {
   delivery_status: string;
   time_from: string;
   time_to: string;
+  technique: string;
 }
-const EMPTY: Filters = { org_id: '', severity: [], verdict: '', source_type: '', source_id: '', entity: '', delivery_status: '', time_from: '', time_to: '' };
+const EMPTY: Filters = { org_id: '', severity: [], verdict: '', source_type: '', source_id: '', entity: '', delivery_status: '', time_from: '', time_to: '', technique: '' };
 
 const route = useRoute();
 const router = useRouter();
@@ -41,6 +43,7 @@ function fromQuery(q: LocationQuery): Filters {
     delivery_status: q1(q, 'delivery_status'),
     time_from: q1(q, 'time_from'),
     time_to: q1(q, 'time_to'),
+    technique: q1(q, 'technique'),
   };
 }
 const applied = computed(() => fromQuery(route.query));
@@ -59,6 +62,7 @@ const list = useAsync(() => {
     delivery_status: a.delivery_status,
     time_from: a.time_from ? localInputToIso(a.time_from) : undefined,
     time_to: a.time_to ? localInputToIso(a.time_to) : undefined,
+    technique: a.technique.trim().toUpperCase() || undefined,
     limit: PAGE,
     offset: offset.value,
   });
@@ -141,6 +145,10 @@ function toggleSev(s: string, on: boolean) {
             <option v-for="(v, k) in DELIVERY_LABEL" :key="k" :value="k">{{ v }}</option>
           </select>
         </label>
+        <label class="field">
+          <span class="field-label">ATT&amp;CK 기법</span>
+          <input v-model="f.technique" placeholder="T1190 (상위 기법이면 하위 포함)" data-testid="alert-filter-technique" />
+        </label>
         <label class="field"><span class="field-label">기간 시작 (KST)</span><input v-model="f.time_from" type="datetime-local" /></label>
         <label class="field"><span class="field-label">기간 끝 (KST)</span><input v-model="f.time_to" type="datetime-local" /></label>
       </div>
@@ -158,7 +166,7 @@ function toggleSev(s: string, on: boolean) {
     <div v-if="list.data.value" class="card table-wrap">
       <table class="table" data-testid="alert-list">
         <thead>
-          <tr><th>생성</th><th>등급</th><th>제목</th><th>기관</th><th>대상</th><th>출처</th><th>최초~최종</th><th class="num">횟수</th><template v-if="showIncident()"><th>전달</th><th>판정</th></template></tr>
+          <tr><th>생성</th><th>등급</th><th>제목</th><th>기관</th><th>대상</th><th>출처</th><th>ATT&amp;CK</th><th>최초~최종</th><th class="num">횟수</th><template v-if="showIncident()"><th>전달</th><th>판정</th></template></tr>
         </thead>
         <tbody>
           <tr v-for="a in list.data.value.items" :key="a.alert_id">
@@ -168,6 +176,7 @@ function toggleSev(s: string, on: boolean) {
             <td>{{ a.org_id }}</td>
             <td>{{ a.entity }}</td>
             <td class="small">{{ a.source_type === 'scenario' ? '순서도' : '단일룰' }} {{ a.source_id }} v{{ a.source_version }}</td>
+            <td class="small"><AttackChips :items="a.attack" compact /></td>
             <td class="small">{{ fmtTime(a.first_seen) }}<br />{{ fmtTime(a.last_seen) }}</td>
             <td class="num">{{ a.hit_count }}</td>
             <td v-if="showIncident()">

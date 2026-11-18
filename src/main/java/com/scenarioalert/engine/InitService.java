@@ -1,5 +1,7 @@
 package com.scenarioalert.engine;
 
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.ch.ClickHouse;
 import com.scenarioalert.engine.ch.ClickHouse.Purpose;
 import com.scenarioalert.engine.common.Db;
@@ -29,7 +31,7 @@ import static com.scenarioalert.engine.common.Db.p;
 
 /**
  * 초기화 작업 (Python 원본 server/cli.py 와 같은 순서).
- * init: (Flyway 마이그레이션은 시작 때 끝남) → ClickHouse SQL 파일 적용 → 기준 데이터·기본 룰 → (SEED_SAMPLE) 샘플 이벤트.
+ * init: (Flyway 마이그레이션은 시작 때 끝남) → ClickHouse SQL 파일 적용 → 기준 데이터 → ATT&CK 번들 → 기본 룰 → (SEED_SAMPLE) 샘플 이벤트.
  * 기본 순서도를 넣을 때 순서도마다 Python 평가 코드가 생성된다.
  */
 @Component
@@ -42,8 +44,13 @@ public class InitService {
     private final Repo repo;
     private final SampleDataService samples;
     private final AppProperties props;
+    private final AttackService attack;
+    private final D3fendService d3fend;
 
-    public InitService(Db db, ClickHouse ch, Repo repo, SampleDataService samples, AppProperties props) {
+    public InitService(Db db, ClickHouse ch, Repo repo, SampleDataService samples, AppProperties props, AttackService attack,
+                       D3fendService d3fend) {
+        this.attack = attack;
+        this.d3fend = d3fend;
         this.db = db;
         this.ch = ch;
         this.repo = repo;
@@ -121,6 +128,10 @@ public class InitService {
         }
     }
 
+    /** 원본 이벤트 테이블 (운영과 같은 이름·구조. 조회·적재 입구는 Distributed, 실제 데이터는 store). */
+    public static final String SOURCE = "default.log_integrated_success_all";
+    public static final String SOURCE_STORE = "default.log_integrated_success_store";
+
     public Map<String, Object> loadBuiltin(String status) {
         int[] n = {0, 0};
         db.txRun(() -> {
@@ -166,7 +177,7 @@ public class InitService {
 
     /** 테스트 데이터 초기화: 이벤트·히트·경보·실행 이력을 지운다 (설정·룰은 유지). 개발 환경 전용. */
     public void resetData() {
-        for (String t : List.of("codlog.log_integrated_success_all", "detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen")) {
+        for (String t : List.of(SOURCE_STORE, "detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen")) {
             ch.command("TRUNCATE TABLE IF EXISTS " + t, Map.of(), Purpose.ADMIN);
         }
         db.txRun(() -> {
@@ -174,6 +185,9 @@ public class InitService {
                 db.execute("DELETE FROM " + t, Map.of());
             }
             db.execute("UPDATE single_rules SET last_evaluated_to=NULL, next_run_at=NULL, consecutive_failures=0", Map.of());
+            // 통합 테스트가 넣은 잘라 낸 ATT&CK 번들(테스트 픽스처). 실제 번들과 버전 번호가 같아 init 의 가져오기를 막는다
+            db.execute("DELETE FROM attack_versions WHERE imported_by='test'", Map.of());
+            db.execute("DELETE FROM d3fend_versions WHERE imported_by='test'", Map.of());
         });
         log.info("data reset");
     }
@@ -182,10 +196,14 @@ public class InitService {
         waitReady(120);
         applyClickHouse(true);
         samples.seedReference();
+        // ATT&CK 번들(ATTACK_DIR)을 기본 룰보다 먼저 가져온다: 룰의 기법 참조를 활성 버전으로 검사한다
+        log.info("ATT&CK: {}", attack.importDir("system"));
+        // D3FEND 릴리스(D3FEND_DIR/<버전>/)도 기본 룰보다 먼저: 룰·경보 노드의 지정 대응방책을 활성 버전으로 검사한다
+        log.info("D3FEND: {}", d3fend.importDir("system"));
         log.info("builtin loaded: {}", loadBuiltin(props.init().builtinStatus()));
         ch.reloadDictionaries();
         if (props.init().seedSample()) {
-            List<Map<String, Object>> r = ch.query("SELECT count() AS n FROM codlog.log_integrated_success_all", Map.of(), Purpose.ADMIN);
+            List<Map<String, Object>> r = ch.query("SELECT count() AS n FROM " + SOURCE, Map.of(), Purpose.ADMIN);
             long n = r.isEmpty() ? 0 : (long) ClickHouse.num(r.get(0), "n");
             if (n == 0) {
                 loadSample(props.init().sampleHours());

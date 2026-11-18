@@ -12,3 +12,7 @@ web/playwright-report/
 .idea/
 .vscode/
 *.iml
+
+# 다른 PC 로 옮기기 묶음 (scripts/migrate_export.ps1 출력, 수 GB)
+output/
+scenario-migrate-*/

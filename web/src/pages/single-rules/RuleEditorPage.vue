@@ -5,6 +5,8 @@ import { useRouter } from 'vue-router';
 import { ApiError, api, enc } from '../../api';
 import { has } from '../../auth';
 import { useMeta, watchDebounced } from '../../composables';
+import AttackPicker from '../../components/AttackPicker.vue';
+import D3fendPicker from '../../components/D3fendPicker.vue';
 import BacktestPanel from '../../components/BacktestPanel.vue';
 import CardBox from '../../components/CardBox.vue';
 import ChangeNoteModal from '../../components/ChangeNoteModal.vue';
@@ -224,6 +226,16 @@ function toggleExclude(id: string, on: boolean) {
   const cur = def.value.exclude_lists ?? [];
   def.value.exclude_lists = on ? [...cur, id] : cur.filter((x) => x !== id);
 }
+/** ATT&CK 기법: 비우면 정의에서 뺀다 (기존 정의와 같은 모양 유지) */
+function setAttack(v: string[]) {
+  if (!def.value) return;
+  def.value.attack = v.length ? v : undefined;
+}
+/** 지정 대응방책(D3FEND): 비우면 정의에서 뺀다 */
+function setD3fend(v: string[]) {
+  if (!def.value) return;
+  def.value.d3fend = v.length ? v : undefined;
+}
 function numOrUndef(v: string): number | undefined {
   return v === '' ? undefined : Number(v);
 }
@@ -440,6 +452,12 @@ const tabs = computed(() => [
                 <input v-model="def.suppress_for" list="dur-suppress" placeholder="1h (기본)" data-testid="rule-suppress-for" />
               </FormField>
             </div>
+            <FormField label="MITRE ATT&amp;CK 기법" :error="errOf('attack')" hint="이 룰이 보는 공격 기법. 경보와 탐지 커버리지(ATT&amp;CK 메뉴)에 쓰입니다">
+              <AttackPicker :model-value="def.attack ?? []" :disabled="!canEdit" test-id="rule-attack" @update:model-value="setAttack" />
+            </FormField>
+            <FormField label="지정 대응방책 (MITRE D3FEND)" :error="errOf('d3fend')" hint="이 룰의 경보에서 할 대응 기법. 경보 상세의 대응방책에 지정으로 표시되고 사고처리 시스템에도 전달됩니다">
+              <D3fendPicker :model-value="def.d3fend ?? []" :disabled="!canEdit" :suggest-for="def.attack ?? []" test-id="rule-d3fend" @update:model-value="setD3fend" />
+            </FormField>
           </CardBox>
         </fieldset>
       </div>

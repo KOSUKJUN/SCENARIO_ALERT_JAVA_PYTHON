@@ -76,3 +76,15 @@ SOURCE(MYSQL(NAME mariadb_detect
     query 'SELECT org_id, rule_id, enabled, COALESCE(threshold, -1) AS threshold FROM org_rule_params'))
 LAYOUT(COMPLEX_KEY_HASHED())
 LIFETIME(MIN 30 MAX 60);
+
+-- 로그 수집원(_asset_id) → 기관. 운영 원본에 기관 컬럼이 없어 이 매핑으로 org_id 를 정한다 (MariaDB log_sources, 설정 > 로그 수집원).
+CREATE OR REPLACE DICTIONARY detect.dict_log_sources
+(
+    asset_id String,
+    org_id   String
+)
+PRIMARY KEY asset_id
+SOURCE(MYSQL(NAME mariadb_detect
+    query 'SELECT asset_id, org_id FROM log_sources'))
+LAYOUT(COMPLEX_KEY_HASHED())
+LIFETIME(MIN 30 MAX 60);

@@ -15,3 +15,4 @@ exclude_lists: [false_positive_hosts]
 schedule: 1m
 alert_on_hit: false
 severity: medium
+attack: [T1133, T1110]

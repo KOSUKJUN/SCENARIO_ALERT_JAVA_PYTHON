@@ -1,5 +1,5 @@
 # 개발·테스트용 구성 (docker compose up -d --build)
-# - clickhouse : 이벤트 저장소(codlog.log_integrated_success_all 테스트 사본) + detect DB
+# - clickhouse : 이벤트 저장소(default.log_integrated_success_all 운영 구조 사본) + detect DB
 # - mariadb    : 설정·경보 저장소 (ClickHouse 딕셔너리 원본). 시나리오별 생성 Python 코드도 여기 저장
 # - init       : Flyway 마이그레이션 + ClickHouse SQL + 기본 룰/순서도(→ Python 코드 생성) + 샘플 데이터 (1회 실행 후 종료)
 # - server     : Java API + 스케줄러 (탐지 서버 1호기). 시나리오 평가는 컨테이너 안의 Python 상주 프로세스가 한다
@@ -8,6 +8,8 @@
 # - mockcase   : 사고처리 시스템 모의 서버 (경보 수신, 판정 회신)
 # - tester     : 테스트 전용 (docker compose --profile test run --rm tester)
 # 접속 정보는 .env 로 덮어쓸 수 있다 (기본값은 개발용).
+# 프로젝트 이름을 고정한다: 다른 폴더·다른 PC 로 옮겨도 볼륨 이름(scenario_alert_java_python_mariadb-data 등)이 같다.
+name: scenario_alert_java_python
 
 x-server-env: &server-env
   TZ: Asia/Seoul
@@ -50,7 +52,7 @@ services:
       retries: 30
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:25.3.2.39  # 운영과 같은 버전 (원본 fields 가 JSON 타입)
     environment:
       TZ: Asia/Seoul
       CLICKHOUSE_USER: default
@@ -82,6 +84,10 @@ services:
       SEED_SAMPLE: ${SEED_SAMPLE:-true}
       SAMPLE_HOURS: ${SAMPLE_HOURS:-2}
       BUILTIN_STATUS: ${BUILTIN_STATUS:-active}
+    volumes:
+      # MITRE ATT&CK STIX 번들·D3FEND 릴리스(버전별 하위 디렉터리) (폐쇄망 반입). 새 파일을 init 이 가져오고, 화면에서도 가져올 수 있다
+      - ./data/attack:/app/data/attack:ro
+      - ./data/d3fend:/app/data/d3fend:ro
     depends_on:
       mariadb: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
@@ -98,6 +104,9 @@ services:
     volumes:
       # 시나리오별로 생성된 Python 코드를 호스트에서 바로 볼 수 있게 한다 (원본은 MariaDB, 이 파일은 캐시)
       - ./data/scenarios:/app/data/scenarios
+      # MITRE ATT&CK STIX 번들·D3FEND 릴리스(버전별 하위 디렉터리) (폐쇄망 반입). 새 파일을 init 이 가져오고, 화면에서도 가져올 수 있다
+      - ./data/attack:/app/data/attack:ro
+      - ./data/d3fend:/app/data/d3fend:ro
     ports:
       - "${API_HOST_PORT:-8000}:8000"
     depends_on:

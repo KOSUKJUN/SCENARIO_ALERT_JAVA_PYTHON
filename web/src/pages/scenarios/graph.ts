@@ -142,6 +142,8 @@ function cleanNode(id: string, g: NodeProps_, pos: { x: number; y: number }): Gr
       n.severity = g.severity ?? 'medium';
       n.title = g.title ?? '';
       if (g.playbook) n.playbook = g.playbook;
+      if (g.attack?.length) n.attack = [...g.attack];
+      if (g.d3fend?.length) n.d3fend = [...g.d3fend];
       break;
     default:
       break;

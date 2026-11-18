@@ -20,6 +20,8 @@ export const router = createRouter({
         { path: 'scenarios/:scenarioId', component: () => import('./pages/scenarios/ScenarioEditorPage.vue'), props: true },
         { path: 'alerts', component: () => import('./pages/alerts/AlertListPage.vue') },
         { path: 'alerts/:alertId', component: () => import('./pages/alerts/AlertDetailPage.vue'), props: true },
+        { path: 'attack/:tab?', component: () => import('./pages/attack/AttackPage.vue'), props: true },
+        { path: 'd3fend/:tab?', component: () => import('./pages/d3fend/D3fendPage.vue'), props: true },
         { path: 'settings/:tab?', component: () => import('./pages/settings/SettingsPage.vue'), props: true },
         { path: 'dev', component: () => import('./pages/DevPage.vue') },
         { path: ':rest(.*)*', redirect: '/' },

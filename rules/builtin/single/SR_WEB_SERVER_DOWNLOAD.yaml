@@ -1,0 +1,21 @@
+id: SR_WEB_SERVER_DOWNLOAD
+name: 웹서버의 외부 파일 내려받기
+description: >-
+  webserver 태그 자산이 외부로 내려받기 도구 요청(web_downloader_markers: Wget/, curl/ 등)을 보낸다.
+  웹 취약점 공격 뒤 2단계 악성 파일(봇넷·채굴기)을 받는 행위. 대상은 웹서버(출발지).
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [IDS, IPS, TMS, UTM]
+filter:
+  all:
+    - {field: net_direction, op: eq, value: outbound}
+    - {field: src_asset_tags, op: has_tag, value: webserver}
+    - {field: search_text, op: contains_list, value: web_downloader_markers}
+min_count: 1
+window: 10m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: medium
+attack: [T1105]
+d3fend: [D3-FEV, D3-OTF]

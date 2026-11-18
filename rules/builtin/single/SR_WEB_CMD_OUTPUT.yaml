@@ -1,0 +1,25 @@
+id: SR_WEB_CMD_OUTPUT
+name: 웹 응답의 명령 실행 결과
+description: >-
+  내부 서버가 보낸 트래픽(응답)에 OS 정찰 명령의 실행 결과가 보인다: id 출력(uid=..(..) gid=..),
+  uname -a 출력(Linux <호스트> <커널> ... GNU/Linux), 공격 도구의 성공 표지(web_cmd_output_markers).
+  원격 코드 실행 성공의 증거. 대상은 응답한 서버(출발지).
+  ATT&CK: 실행 T1059.004(Unix Shell), 정찰 T1033(id), T1082(uname). PHP2Shell 공개 분석의 첫 명령이 id, uname -a 다.
+type: signature
+entity: {type: host, field: src_ip}
+data_tp: [IDS, IPS, TMS, UTM, WAF]
+filter:
+  all:
+    - {field: src_internal, op: eq, value: true}
+    - any:
+        - {field: payload, op: regex, value: 'uid=[0-9]+\([^)]*\) gid=[0-9]+'}
+        - {field: payload, op: regex, value: 'Linux [^ ]+ [0-9]+\.[0-9]+\.[0-9]+[^ ]* .*GNU/Linux'}
+        - {field: search_text, op: contains_list, value: web_cmd_output_markers}
+min_count: 1
+window: 10m
+exclude_lists: [false_positive_hosts]
+schedule: 1m
+alert_on_hit: false
+severity: high
+attack: [T1059.004, T1033, T1082]
+d3fend: [D3-PT, D3-PSA]

@@ -2,6 +2,8 @@ package com.scenarioalert.engine.it;
 
 import com.scenarioalert.engine.InitService;
 import com.scenarioalert.engine.TestFiles;
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.ch.ClickHouse;
 import com.scenarioalert.engine.ch.ClickHouse.Purpose;
 import com.scenarioalert.engine.common.Db;
@@ -38,33 +40,63 @@ final class ItSupport {
     }
 
     /** 이벤트·히트·경보·룰을 모두 지우고 기준 데이터와 기본 룰을 다시 넣는다. */
-    static void resetAll(Db db, ClickHouse ch, InitService init, SampleDataService samples, String builtinStatus) {
+    static final Path ATTACK_FIXTURES = TestFiles.ROOT.resolve("src/test/resources/attack");
+
+    /**
+     * ATT&CK 테스트 번들(공식 번들에서 잘라 낸 19.2, 20.1)을 새로 넣고 20.1 을 활성화한다.
+     * 기본 룰의 기법 참조 검사와 경보의 기법 스냅샷이 이 데이터를 쓴다.
+     */
+    static void loadAttack(Db db, AttackService attack) {
+        db.txRun(() -> db.execute("DELETE FROM attack_versions", Map.of()));
+        for (String v : List.of("19.2", "20.1")) {
+            String name = "enterprise-attack-mini-" + v + ".json";
+            try (var in = Files.newInputStream(ATTACK_FIXTURES.resolve(name))) {
+                attack.importStream(in, name, "test", null);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+        attack.activate("enterprise-attack", "20.1", "test");
+    }
+
+    static final Path D3FEND_FIXTURES = TestFiles.ROOT.resolve("src/test/resources/d3fend");
+
+    /** 잘라 낸 D3FEND 1.5.0·1.6.0 을 가져오고 1.6.0 을 활성화한다 (imported_by=test: reset-data 가 지운다). */
+    static void loadD3fend(Db db, D3fendService d3fend) {
+        db.txRun(() -> db.execute("DELETE FROM d3fend_versions", Map.of()));
+        for (String v : List.of("1.5.0", "1.6.0")) {
+            try (var o = Files.newInputStream(D3FEND_FIXTURES.resolve(v).resolve(D3fendService.ONTOLOGY_FILE));
+                 var m = Files.newInputStream(D3FEND_FIXTURES.resolve(v).resolve(D3fendService.MAPPINGS_FILE))) {
+                d3fend.importStreams(o, D3fendService.ONTOLOGY_FILE, m, D3fendService.MAPPINGS_FILE, "test-" + v, "test", null);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+        d3fend.activate("1.6.0", "test");
+    }
+
+    static void resetAll(Db db, ClickHouse ch, InitService init, SampleDataService samples, AttackService attack,
+                         D3fendService d3fend, String builtinStatus) {
         init.applyClickHouse(true);
-        for (String t : List.of("codlog.log_integrated_success_all", "detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen")) {
+        for (String t : List.of(InitService.SOURCE_STORE, "detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen")) {
             ch.command("TRUNCATE TABLE " + t, Map.of(), Purpose.ADMIN);
         }
         db.txRun(() -> {
             for (String t : List.of("alerts", "rule_runs", "backtest_jobs", "known_incidents", "scenario_rule_refs",
                     "scenario_versions", "scenarios", "org_rule_params", "single_rule_versions", "single_rules", "asset_tags",
-                    "assets", "list_items", "lists", "org_cidrs", "orgs", "sessions", "audit_log")) {
+                    "assets", "list_items", "lists", "log_sources", "org_cidrs", "orgs", "sessions", "audit_log")) {
                 db.execute("DELETE FROM " + t, Map.of());
             }
         });
         samples.seedReference();
+        loadAttack(db, attack);
+        loadD3fend(db, d3fend);
         init.loadBuiltin(builtinStatus);
         ch.reloadDictionaries();
     }
 
     static LocalDateTime baseTime() {
         return Kst.floor(Kst.now().minusHours(3), 3600);
-    }
-
-    private static String v6(Object ip) {
-        if (ip == null) {
-            return null;
-        }
-        String s = String.valueOf(ip);
-        return s.contains(":") ? s : "::ffff:" + s;
     }
 
     @SuppressWarnings("unchecked")
@@ -77,17 +109,13 @@ final class ItSupport {
                 continue;
             }
             Map<String, Object> e = Json.loadMap(line);
-            Map<String, Object> r = new LinkedHashMap<>();
-            for (String c : SampleDataService.COLUMNS) {
-                r.put(c, e.get(c));
-            }
-            r.put("event_id", UUID.randomUUID().toString());
-            r.put("mgr_time", Kst.fmt(base.plusNanos(((Number) e.get("offset_ms")).longValue() * 1_000_000)));
+            // events.jsonl 은 운영 원본 키(_data_type, _asset_id, 공통 필드, fields 객체)에 시간 대신 기준 시각부터의 offset 을 쓴다
+            Map<String, Object> r = new LinkedHashMap<>(e);
+            r.put("_event_cd", UUID.randomUUID().toString());
+            r.put("_collect_time", Kst.fmt(base.plusNanos(((Number) e.get("offset_ms")).longValue() * 1_000_000)));
             Object eo = e.get("event_offset_ms");
             r.put("event_time", eo == null ? null : Kst.fmt(base.plusNanos(((Number) eo).longValue() * 1_000_000)));
-            r.put("s_info", v6(e.get("s_info")));
-            r.put("d_info", v6(e.get("d_info")));
-            rows.add(r);
+            rows.add(SampleDataService.toRow(r));
         }
         samples.insertEvents(rows);
         Map<String, Object> setup = exp.get("setup") == null ? Map.of() : (Map<String, Object>) exp.get("setup");

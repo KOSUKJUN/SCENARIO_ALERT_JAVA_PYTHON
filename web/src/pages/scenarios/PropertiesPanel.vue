@@ -2,6 +2,8 @@
 // 오른쪽 속성 패널: 선택한 노드·화살표, 아무것도 고르지 않았으면 순서도 전체 설정.
 // 노드·화살표 객체는 Vue Flow 저장소의 반응형 객체라 여기서 바로 고치고 changed 를 알린다.
 import { computed, ref, watch } from 'vue';
+import AttackPicker from '../../components/AttackPicker.vue';
+import D3fendPicker from '../../components/D3fendPicker.vue';
 import FormField from '../../components/FormField.vue';
 import ListInput from '../../components/ListInput.vue';
 import type { MetaFields, NodeSim, RuleSummary, Severity } from '../../types';
@@ -147,6 +149,12 @@ const setMeta = <K extends keyof GraphMeta>(k: K, v: GraphMeta[K]) => {
       </FormField>
       <FormField label="대응 절차 (playbook)">
         <textarea :value="g.playbook ?? ''" rows="4" :disabled="readOnly" data-testid="prop-playbook" @input="setG('playbook', ($event.target as HTMLTextAreaElement).value)" />
+      </FormField>
+      <FormField label="MITRE ATT&amp;CK 기법" hint="이 결론이 뜻하는 기법. 경로에서 성립한 룰의 기법은 경보에 자동으로 더해집니다">
+        <AttackPicker :model-value="g.attack ?? []" :disabled="readOnly" test-id="prop-attack" @update:model-value="(v) => setG('attack', v.length ? v : undefined)" />
+      </FormField>
+      <FormField label="지정 대응방책 (MITRE D3FEND)" hint="이 결론에서 할 대응 기법. 경로의 룰에 지정한 대응방책도 경보에 더해집니다">
+        <D3fendPicker :model-value="g.d3fend ?? []" :disabled="readOnly" :suggest-for="g.attack ?? []" test-id="prop-d3fend" @update:model-value="(v) => setG('d3fend', v.length ? v : undefined)" />
       </FormField>
     </template>
     <div v-if="sim" class="sim-box">

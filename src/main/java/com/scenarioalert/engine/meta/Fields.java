@@ -85,7 +85,8 @@ public final class Fields {
 
         Set<String> ipTypes = but("WFILTER");
         f("data_tp", "string", "데이터 유형", ALL, false, DATA_TYPES, "");
-        f("org_id", "string", "기관");
+        f("org_id", "string", "기관 (로그 수집원 매핑)");
+        f("log_source", "string", "로그 수집원 (원본 _asset_id)");
         f("product", "string", "제품");
         f("log", "string", "로그 종류");
         f("sublog", "string", "하위 로그 종류");
@@ -105,6 +106,11 @@ public final class Fields {
         f("signature_category", "string", "시그니처 분류(매핑 리스트)", but("APT", "VPN"));
         f("attack", "string", "공격명", only("DDos", "FIREWALL", "IPS", "TMS", "UTM", "WAF", "WEB", "WFILTER"));
         f("risk", "string", "위험도");
+        f("event_type", "string", "이벤트 유형");
+        f("category", "string", "분류(장비 값)");
+        f("origin_id", "string", "수집 장비 ID");
+        f("origin_name", "string", "수집 장비명");
+        f("origin_ip", "ip", "수집 장비 IP");
         f("event_count", "int", "이벤트 수", ALL, false, List.of(), "TMS, VPN, WAF 는 1건으로 계산");
         f("uri", "string", "URI", only("WAF", "WEB"));
         f("url_method", "string", "HTTP 메서드", only("WAF", "WEB"));

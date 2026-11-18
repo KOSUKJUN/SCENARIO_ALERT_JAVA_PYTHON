@@ -84,6 +84,10 @@ export interface RuleDefinition {
   suppress_for?: string;
   tags?: Json;
   status?: Status;
+  /** MITRE ATT&CK 기법 ID (T1190, T1059.004) */
+  attack?: string[];
+  /** 지정 대응방책: MITRE D3FEND 방어 기법 ID (D3-PT, D3-NI) */
+  d3fend?: string[];
 }
 
 export interface RuleSummary {
@@ -186,6 +190,10 @@ export interface GraphNode {
   severity?: Severity;
   title?: string;
   playbook?: string;
+  /** 경보 노드: MITRE ATT&CK 기법 ID (경로의 룰 기법은 경보에 자동으로 더해진다) */
+  attack?: string[];
+  /** 경보 노드: 지정 대응방책 (MITRE D3FEND 방어 기법 ID) */
+  d3fend?: string[];
 }
 
 export interface GraphEdge {
@@ -382,9 +390,15 @@ export interface AlertItem {
   verdict: string | null;
   created_at: string;
   upgraded_at: string | null;
+  /** 경보 생성(상향) 때의 MITRE ATT&CK 기법 스냅샷 */
+  attack?: AttackRef[];
+  /** 경보 생성(상향) 때의 지정 대응방책 (D3FEND) 스냅샷 */
+  d3fend?: D3fendRef[];
 }
 
 export interface AlertDetail extends AlertItem {
+  attack_version?: string | null;
+  d3fend_version?: string | null;
   playbook: string | null;
   path: PathStep[];
   delivery_error: string | null;
@@ -500,4 +514,267 @@ export interface RuleMetrics {
     delivery_error: string | null;
     created_at: string;
   }[];
+}
+
+// ---------- MITRE ATT&CK (내부 사본) ----------
+export interface AttackTactic {
+  id: string;
+  name: string;
+  shortname?: string;
+}
+
+/** 경보에 저장된 기법 (스냅샷). name 이 null 이면 그때 활성 버전에 없던 ID. */
+export interface AttackRef {
+  id: string;
+  name: string | null;
+  tactics: AttackTactic[];
+  revoked_by?: string;
+}
+
+/** POST /attack/techniques/lookup 결과 한 건 (활성 버전) */
+export interface AttackLookup extends AttackRef {
+  deprecated: boolean;
+  revoked: boolean;
+  revoked_by: string;
+  domain: string;
+  version: string;
+}
+
+export interface AttackVersion {
+  domain: string;
+  version: string;
+  name: string;
+  released_at: string | null;
+  spec_version: string | null;
+  source_file: string;
+  source_sha256: string;
+  counts: Record<string, number>;
+  is_active: boolean;
+  imported_by: string;
+  imported_at: string;
+  activated_at: string | null;
+}
+
+export interface AttackSearchItem {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  parent_name: string | null;
+  tactics: string[];
+}
+
+export interface AttackCoverage {
+  rules: { id: string; name: string; status: Status }[];
+  scenarios: { id: string; name: string; status: Status; via: string }[];
+  alerts_30d: number;
+}
+
+export interface AttackRelated {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface AttackTechniqueDetail {
+  id: string;
+  name: string;
+  domain: string;
+  version: string;
+  parent_id: string | null;
+  parent_name?: string | null;
+  description: string | null;
+  url: string | null;
+  tactics: AttackTactic[];
+  extra: { platforms?: string[] };
+  deprecated: boolean;
+  revoked: boolean;
+  revoked_by: string | null;
+  stix_modified: string | null;
+  subtechniques: { id: string; name: string }[];
+  mitigations: AttackRelated[];
+  detections: AttackRelated[];
+  groups: AttackRelated[];
+  software: AttackRelated[];
+  coverage: AttackCoverage;
+}
+
+export interface AttackMatrixCell {
+  id: string;
+  name: string;
+  rules: number;
+  scenarios: number;
+  alerts_30d: number;
+  covered: boolean;
+  subtechniques?: AttackMatrixCell[];
+}
+
+export interface AttackMatrix {
+  domain: string;
+  version: string;
+  tactics: (AttackTactic & { techniques: AttackMatrixCell[] })[];
+  summary: { techniques: number; covered: number; cells: number };
+}
+
+export interface AttackDiffResult {
+  domain: string;
+  from: string | null;
+  to: string;
+  summary?: Record<string, number>;
+  added?: { id: string; name: string }[];
+  removed?: { id: string; name: string }[];
+  revoked?: { id: string; name: string; revoked_by: string | null; revoked_by_name: string | null }[];
+  deprecated?: { id: string; name: string }[];
+  renamed?: { id: string; from: string; to: string }[];
+  tactics_changed?: { id: string; name: string; from: string[]; to: string[] }[];
+  impact: {
+    technique: string;
+    status: 'missing' | 'revoked' | 'deprecated';
+    replacement: string | null;
+    refs: { kind: 'rule' | 'scenario'; id: string; name: string; status: Status; detail: string | null }[];
+  }[];
+}
+
+// ---------- MITRE D3FEND (내부 사본, 대응방책) ----------
+export type D3fendTactic = 'Model' | 'Harden' | 'Detect' | 'Isolate' | 'Deceive' | 'Evict' | 'Restore';
+
+/** 경보에 저장된 지정 대응방책 (스냅샷). name 이 null 이면 그때 활성 버전에 없던 ID. */
+export interface D3fendRef {
+  id: string;
+  name: string | null;
+  tactic: string | null;
+}
+
+export interface D3fendLookup extends D3fendRef {
+  parent_id: string | null;
+  version: string;
+}
+
+export interface D3fendVersion {
+  version: string;
+  released_at: string | null;
+  source_files: { source: string; files: { file: string; sha256: string }[] };
+  source_sha256: string;
+  counts: Record<string, number>;
+  is_active: boolean;
+  imported_by: string;
+  imported_at: string;
+  activated_at: string | null;
+}
+
+export interface D3fendSearchItem {
+  id: string;
+  name: string;
+  tactic: string;
+  parent_id: string | null;
+  parent_name: string | null;
+  depth: number;
+  attack_count: number;
+}
+
+export interface D3fendRefSite {
+  kind: 'rule' | 'scenario';
+  id: string;
+  name: string;
+  status: Status;
+  detail: string | null;
+}
+
+export interface D3fendVia {
+  def_tech: string | null;
+  def_rel: string | null;
+  def_artifact: string | null;
+  off_rel: string | null;
+  off_artifact: string | null;
+}
+
+export interface D3fendTechniqueDetail {
+  id: string;
+  iri: string;
+  name: string;
+  tactic: string;
+  tactic_ko: string | null;
+  parent_id: string | null;
+  depth: number;
+  definition: string | null;
+  kb_article: string | null;
+  synonyms: string[];
+  version: string;
+  ancestors: { id: string; name: string }[];
+  children: { id: string; name: string }[];
+  attack: { id: string; name: string | null; domain: string; via: D3fendVia[] }[];
+  mitigations: { id: string; name: string | null }[];
+  designated_by: D3fendRefSite[];
+}
+
+export interface D3fendMatrixCell {
+  id: string;
+  name: string;
+  tactic: string;
+  parent_id: string | null;
+  depth: number;
+  attack_count: number;
+  designated: number;
+}
+
+export interface D3fendMatrix {
+  version: string;
+  tactics: { name: string; label_ko: string; ord: number; definition: string | null; techniques: D3fendMatrixCell[] }[];
+  summary: { techniques: number; designated: number };
+}
+
+export interface CountermeasureItem {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  depth: number;
+  definition: string | null;
+  attack: string[];
+  via: D3fendVia[];
+  mitigations: { id: string; name: string }[];
+  designated: boolean;
+  recommended: boolean;
+}
+
+export interface Countermeasures {
+  version: string;
+  attack: string[];
+  designated: string[];
+  tactics: { tactic: string; label_ko: string; response: boolean; techniques: CountermeasureItem[] }[];
+  attack_mitigations: { id: string; name: string; attack: string[]; d3fend: string[] }[];
+  unmapped_attack: string[];
+  parent_fallback: { attack: string; used: string }[];
+  missing_designated: { id: string }[];
+  summary: { techniques: number; designated: number; recommended: number; mapped: number };
+}
+
+export interface D3fendLinkItem {
+  kind: 'rule' | 'scenario';
+  id: string;
+  name: string;
+  status: Status;
+  node: string | null;
+  severity: Severity | null;
+  title?: string;
+  attack: string[];
+  d3fend: D3fendRef[];
+  mapped: number;
+  response: boolean;
+}
+
+export interface D3fendLinks {
+  version: string | null;
+  items: D3fendLinkItem[];
+  summary: { total: number; with_attack: number; with_d3fend: number; with_response: number };
+}
+
+export interface D3fendDiffResult {
+  from: string | null;
+  to: string;
+  summary?: Record<string, number>;
+  added?: { id: string; name: string; tactic: string }[];
+  removed?: { id: string; name: string; tactic: string }[];
+  renamed?: { id: string; from: string; to: string }[];
+  moved?: { id: string; name: string; from: string; to: string }[];
+  updated?: string[];
+  impact: { technique: string; status: 'missing'; refs: D3fendRefSite[] }[];
 }

@@ -16,3 +16,4 @@ exclude_lists: []
 schedule: 1m
 alert_on_hit: false
 severity: high
+attack: [T1210]

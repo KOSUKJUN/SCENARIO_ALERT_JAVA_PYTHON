@@ -9,7 +9,7 @@
 | **단일룰 탐지** (정의 검증 → ClickHouse SQL 변환 → 실행) | **Java** | 컴파일 결과가 Python 원본 스냅샷과 글자 하나까지 같다 (테스트로 고정) |
 | **시나리오(순서도) 탐지** | **Python (시나리오마다 생성)** | 순서도를 저장하면 Java 가 그 버전 전용 Python 모듈을 생성하고, 평가는 그 코드가 한다 |
 | 관리 화면 | Vue 3 (원본 그대로) | 버전 탭에 "Python 코드" 보기만 추가 |
-| 저장소 | ClickHouse 24.8, MariaDB 10.11 | 스키마 동일 (+ `scenario_versions.python_code`) |
+| 저장소 | ClickHouse 25.3 (운영과 같은 버전), MariaDB 10.11 | 원본 이벤트 테이블은 운영과 같은 `default.log_integrated_success_all` ([docs/architecture.md](docs/architecture.md) 5장) |
 
 ```
 순서도 저장 ──▶ Java: 그래프 검증 ──▶ Java: Python 코드 생성 ──▶ MariaDB(scenario_versions.python_code) + data/scenarios/SC_X/vN.py
@@ -66,6 +66,41 @@ docker compose up -d --build
 6. **사고 사례 대입** ([docs/cases.md](docs/cases.md)): 관제 보고서 사례 12건을 단일룰 7개·순서도 6개로 옮겼다.
    **테스트 데이터** 메뉴의 `[사례] …` 항목을 주입하면 각 사례의 경보가 난다 (예: `wannacry_device`, `exposed_admin_port_success`).
    기관 단위 집계(대상 유형 `org`)는 `ti_contact_*`·`wannacry_spread` 등 445 접근 항목을 3개 이상 주입하면 `SC_ORG_OUTBREAK` 경보(대상 `ORG001`)가 난다.
+7. **MITRE ATT&CK** ([docs/architecture.md](docs/architecture.md) 6장): **ATT&CK** 메뉴에서 탐지 커버리지 매트릭스와 기법 상세를 보고,
+   단일룰 편집기·순서도 경보 노드에서 기법을 단다. 경보 상세·목록에 기법이 나오고 `?technique=T1190` 로 거를 수 있다.
+8. **MITRE D3FEND 대응방책** ([docs/architecture.md](docs/architecture.md) 7장): **D3FEND 대응** 메뉴에서 방어 기법 매트릭스·상세,
+   룰·순서도 경보 노드별 대응방책 연계 현황을 본다. 단일룰 편집기·순서도 경보 노드에서 **지정 대응방책**(D3-NI 등)을 달고,
+   경보 상세의 **대응방책** 카드에 지정(경보 스냅샷)과 ATT&CK 기법 기준 D3FEND 권고가 전술별(격리·퇴출·복구 먼저)로 나온다.
+
+### MITRE ATT&CK 데이터 넣기 (폐쇄망)
+
+ATT&CK 은 서버 안에 버전별로 보관하고 인터넷을 쓰지 않는다. 데이터가 없어도 탐지는 돌고, 기법 이름·검사만 빠진다.
+
+1. 인터넷이 되는 PC: `powershell -ExecutionPolicy Bypass -File scripts\fetch_attack.ps1` (최신) 또는 `-Version 20.1`, 목록은 `-List`.
+   `data/attack/enterprise-attack-<버전>.json` 과 sha256 이 나온다.
+2. 폐쇄망 서버의 `data/attack/` 에 복사하고 `docker compose run --rm init` (새 파일만 가져오고 가장 높은 버전을 활성화).
+   또는 화면 **ATT&CK > 버전 관리**에서 올리거나 서버 디렉터리 파일을 가져온다 (admin).
+3. 새 버전은 **비교·활성화**에서 현재 룰·순서도에 미치는 영향(없어진·폐기된 기법)을 확인한 뒤 활성화한다.
+
+### MITRE D3FEND 데이터 넣기 (폐쇄망)
+
+D3FEND 도 서버 안에 버전별로 보관한다. 한 버전 = 온톨로지 `d3fend.json` + ATT&CK 매핑 `d3fend-full-mappings.csv`.
+데이터가 없어도 탐지·경보는 돌고, 대응방책 이름·권고만 빠진다.
+
+1. 인터넷이 되는 PC: `powershell -ExecutionPolicy Bypass -File scripts\fetch_d3fend.ps1 -Version 1.6.0` → `data/d3fend/1.6.0/` 에 두 파일과 sha256.
+2. 폐쇄망 서버의 `data/d3fend/<버전>/` 에 폴더째 복사하고 `docker compose run --rm init` (새 버전만 가져오고 가장 높은 버전을 활성화).
+   또는 화면 **D3FEND 대응 > 버전 관리**에서 두 파일을 올리거나 서버 디렉터리 릴리스를 가져온다 (admin).
+3. 새 버전은 **비교·활성화**에서 지정 대응방책에 미치는 영향(없어진 기법)을 확인한 뒤 활성화한다.
+
+### 다른 PC 로 옮기기 (Docker Desktop, 데이터 포함)
+
+이 PC 의 이미지·데이터(MariaDB·ClickHouse 볼륨)·프로젝트 파일을 묶어 다른 PC 에 그대로 설치한다. 옮길 PC 는 인터넷이 없어도 된다.
+
+1. 이 PC: `powershell -ExecutionPolicy Bypass -File scripts\migrate_export.ps1 -Out D:\scenario-migrate`
+   (볼륨을 복사하는 동안 스택을 잠깐 멈췄다가 다시 띄운다. 약 1GB. 테스트 이미지까지 넣으려면 `-IncludeTester`)
+2. 묶음 폴더를 USB 등으로 옮길 PC 에 복사한다.
+3. 옮길 PC (Docker Desktop 실행 중): `powershell -ExecutionPolicy Bypass -File D:\scenario-migrate\migrate_import.ps1 -Dest C:\scenario_Alert_java_python`
+   파일 손상 확인(sha256) → 프로젝트 풀기 → 이미지 불러오기 → 볼륨 복원 → 스택 띄우기. 같은 이름의 볼륨이 이미 있으면 멈추고, `-Force` 를 주면 덮어쓴다.
 
 데이터 초기화 (이벤트·히트·경보만 지우고 룰은 유지):
 
@@ -99,11 +134,15 @@ src/main/java/com/scenarioalert/engine/
                   생성 코드 실행 프로세스 풀(PythonScenarioEngine), 코드 파일 캐시(ScenarioCodeStore)
   detection/      스케줄러(SKIP LOCKED, 따라잡기), 후처리(새 히트 → 단독 경보 / 순서도 평가)
   alerting/       경보 생성·상향·억제(GET_LOCK), 사고처리 webhook 전달·재시도
+  attack/         MITRE ATT&CK 번들 읽기(AttackBundle), 버전 비교(AttackDiff), 가져오기·조회·커버리지(AttackService)
+  d3fend/         MITRE D3FEND 릴리스 읽기(D3fendBundle), 가져오기·버전·대응방책 권고·연계 현황(D3fendService)
   backtest/ lifecycle/ api/ auth/ repo/ ch/ sample/ meta/ common/ config/
 src/main/resources/db/migration/   MariaDB 스키마 (Flyway)
 python/scenario_runtime/           시나리오 평가 런타임(runtime.py)과 상주 프로세스(worker.py)  ← Python
 python/tests/                      Python 런타임 테스트 (unittest)
 data/scenarios/                    생성된 시나리오별 Python 코드 (서버가 씀, 캐시)
+data/attack/                       MITRE ATT&CK STIX 번들 반입 위치 (init 이 가져온다. 저장소에는 넣지 않는다)
+data/d3fend/<버전>/                MITRE D3FEND 릴리스 반입 위치 (d3fend.json + d3fend-full-mappings.csv)
 clickhouse/ mariadb/ rules/builtin/  원본과 동일 (SQL, 초기 계정, 기본 룰 14개·순서도 7개)
 web/                               관리 화면 (Vue, 원본 + 코드 보기)
 mockcase/                          모의 사고처리 시스템 (Java 단일 파일)

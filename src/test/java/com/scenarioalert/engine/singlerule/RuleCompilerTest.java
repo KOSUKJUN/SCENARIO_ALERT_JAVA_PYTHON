@@ -30,6 +30,10 @@ class RuleCompilerTest {
             "coinmining_pools", new ListInfo("coinmining_pools", "domain", null, List.of("pool.example")),
             "smb_allowed_sources", new ListInfo("smb_allowed_sources", "ip", null, List.of("10.10.1.99")),
             "false_positive_hosts", new ListInfo("false_positive_hosts", "ip", null, List.of()),
+            "php2shell_request_markers", new ListInfo("php2shell_request_markers", "string", null,
+                    List.of("PHP_SESSION_UPLOAD_PROGRESS", "php2shell")),
+            "web_cmd_output_markers", new ListInfo("web_cmd_output_markers", "string", null, List.of("PHP2SHELL_CONFIRMED")),
+            "web_downloader_markers", new ListInfo("web_downloader_markers", "string", null, List.of("Wget/", "curl/")),
             "internal_nets", new ListInfo("internal_nets", "cidr", "ORG001", List.of("10.0.0.0/8")));
     static final Function<String, ListInfo> LOADER = FAKE::get;
 

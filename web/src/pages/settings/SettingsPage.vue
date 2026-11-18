@@ -7,6 +7,7 @@ import AssetsTab from './AssetsTab.vue';
 import AuditTab from './AuditTab.vue';
 import IncidentsTab from './IncidentsTab.vue';
 import ListsTab from './ListsTab.vue';
+import LogSourcesTab from './LogSourcesTab.vue';
 import OrgsTab from './OrgsTab.vue';
 import RuleParamsTab from './RuleParamsTab.vue';
 import UiTab from './UiTab.vue';
@@ -17,6 +18,7 @@ const router = useRouter();
 const active = computed(() => props.tab || 'orgs');
 const tabs = computed(() => [
   { key: 'orgs', label: '기관' },
+  { key: 'log-sources', label: '로그 수집원' },
   { key: 'lists', label: '리스트·시그니처 분류' },
   { key: 'assets', label: '자산·태그' },
   { key: 'rule-params', label: '기관별 임계치' },
@@ -32,6 +34,7 @@ const tabs = computed(() => [
     <TabBar :model-value="active" :tabs="tabs" @update:model-value="(k) => router.push(`/settings/${k}`)" />
     <div class="tab-body">
       <OrgsTab v-if="active === 'orgs'" />
+      <LogSourcesTab v-else-if="active === 'log-sources'" />
       <ListsTab v-else-if="active === 'lists'" />
       <AssetsTab v-else-if="active === 'assets'" />
       <RuleParamsTab v-else-if="active === 'rule-params'" />

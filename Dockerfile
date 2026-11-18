@@ -32,7 +32,7 @@ COPY --from=build /src/target/scenario-alert-engine.jar /app/app.jar
 COPY python ./python
 COPY clickhouse ./clickhouse
 COPY rules ./rules
-RUN mkdir -p /app/data/scenarios && chown -R app /app/data
+RUN mkdir -p /app/data/scenarios /app/data/attack /app/data/d3fend && chown -R app /app/data
 USER app
 EXPOSE 8000
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=70", "-Dfile.encoding=UTF-8", "-jar", "/app/app.jar"]

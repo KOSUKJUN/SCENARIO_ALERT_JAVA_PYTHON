@@ -13,6 +13,7 @@ import com.scenarioalert.engine.singlerule.RuleValidator;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.PessimisticLockingFailureException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -74,7 +75,31 @@ public class Scheduler {
     }
 
     // ---------------------------------------------------------------- 룰 선택
+    /**
+     * 실행할 룰을 임대한다. 서버 여러 대가 동시에 임대하면 next_run_at(인덱스 idx_due) 갱신이 교착될 수 있다.
+     * 교착 시 MariaDB 가 트랜잭션을 되돌리므로(아무것도 임대되지 않음) 잠깐 쉬고 다시 시도한다.
+     */
     public List<String> claimDueRules() {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return claimOnce();
+            } catch (PessimisticLockingFailureException e) {
+                if (attempt >= CLAIM_RETRIES) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(20L * attempt + java.util.concurrent.ThreadLocalRandom.current().nextLong(30));
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    static final int CLAIM_RETRIES = 5;
+
+    private List<String> claimOnce() {
         LocalDateTime now = clock.now();
         return db.tx(() -> {
             List<String> ids = db.rows("SELECT rule_id FROM single_rules WHERE status IN ('silent','active') AND "

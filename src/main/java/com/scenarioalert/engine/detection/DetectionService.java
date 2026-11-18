@@ -2,6 +2,8 @@ package com.scenarioalert.engine.detection;
 
 import com.scenarioalert.engine.alerting.AlertService;
 import com.scenarioalert.engine.alerting.AlertService.AlertCandidate;
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.ch.ClickHouse;
 import com.scenarioalert.engine.common.Db;
 import com.scenarioalert.engine.common.Json;
@@ -74,11 +76,15 @@ public class DetectionService {
         return new AlertCandidate("single_rule", rule.ruleId(), rule.version(), h.orgId(), parsed.entityType(), h.entity(),
                 parsed.severity(), title.length() > 300 ? title.substring(0, 300) : title, null,
                 desc == null ? "" : String.valueOf(desc), List.of(step), h.firstSeen(), h.lastSeen(),
-                !"active".equals(rule.status()), parsed.suppressSec());
+                !"active".equals(rule.status()), parsed.suppressSec(), AttackService.ids(parsed.raw().get("attack")),
+                D3fendService.ids(parsed.raw().get("d3fend")));
     }
 
-    /** 참조 룰의 (현재 버전, 집계 창 초). */
-    public record RuleMeta(int version, int windowSec) {
+    /** 참조 룰의 (현재 버전, 집계 창 초, ATT&CK 기법, 지정 대응방책 D3FEND 기법). */
+    public record RuleMeta(int version, int windowSec, List<String> attack, List<String> d3fend) {
+        public RuleMeta(int version, int windowSec, List<String> attack) {
+            this(version, windowSec, attack, List.of());
+        }
     }
 
     public Map<String, RuleMeta> ruleMeta(Set<String> ruleIds) {
@@ -91,7 +97,8 @@ public class DetectionService {
                 .forEach(r -> {
                     Map<String, Object> d = Json.loadMap(Db.str(r, "definition"));
                     out.put(Db.str(r, "rule_id"), new RuleMeta(Db.integer(r, "current_version"),
-                            Kst.parseDurationOr(d.getOrDefault("window", "1m"), 0)));
+                            Kst.parseDurationOr(d.getOrDefault("window", "1m"), 0), AttackService.ids(d.get("attack")),
+                            D3fendService.ids(d.get("d3fend"))));
                 });
         return out;
     }
@@ -140,8 +147,18 @@ public class DetectionService {
         return out;
     }
 
+    /**
+     * 순서도 경보 후보. ATT&CK 기법 = 고른 경보 노드의 attack + 그 경로에서 실제로 성립한 룰(rule 노드, check 의 yes)의 attack
+     * + 이번 평가에서 함께 성립한 다른 경보 노드의 attack (경보는 하나만 고르지만, 성립한 단계는 모두 관측된 것이다.
+     * 예: 따라잡기에서 공격 히트가 늦게 들어오면 실행·도구 반입 결론이 한 번의 평가에서 함께 성립한다).
+     */
     public AlertCandidate scenarioCandidate(ScenarioRecord sc, String orgId, String entity, Chosen chosen,
-                                            LocalDateTime now) {
+                                            LocalDateTime now, Map<String, RuleMeta> meta) {
+        return scenarioCandidate(sc, orgId, entity, chosen, List.of(), now, meta);
+    }
+
+    public AlertCandidate scenarioCandidate(ScenarioRecord sc, String orgId, String entity, Chosen chosen, List<String> reached,
+                                            LocalDateTime now, Map<String, RuleMeta> meta) {
         if (chosen == null) {
             return null;
         }
@@ -149,7 +166,38 @@ public class DetectionService {
         return new AlertCandidate("scenario", sc.scenarioId(), sc.version(), orgId, sc.entityType(), entity,
                 chosen.severity(), chosen.title(), chosen.node(), chosen.playbook(), chosen.path(),
                 chosen.firstSeen() != null ? chosen.firstSeen() : t, chosen.lastSeen() != null ? chosen.lastSeen() : t,
-                !"active".equals(sc.status()), sc.suppressSec());
+                !"active".equals(sc.status()), sc.suppressSec(), scenarioAttack(sc.graph(), chosen, reached, meta),
+                scenarioD3fend(sc.graph(), chosen, reached, meta));
+    }
+
+    static List<String> scenarioAttack(Map<String, Object> graph, Chosen chosen, List<String> reached, Map<String, RuleMeta> meta) {
+        return scenarioTags(graph, chosen, reached, meta, "attack");
+    }
+
+    /** 지정 대응방책도 ATT&CK 기법과 같은 범위(고른·함께 성립한 경보 노드 + 경로의 룰)에서 모은다. */
+    static List<String> scenarioD3fend(Map<String, Object> graph, Chosen chosen, List<String> reached, Map<String, RuleMeta> meta) {
+        return scenarioTags(graph, chosen, reached, meta, "d3fend");
+    }
+
+    private static List<String> scenarioTags(Map<String, Object> graph, Chosen chosen, List<String> reached, Map<String, RuleMeta> meta,
+                                             String key) {
+        Set<String> out = new TreeSet<>();
+        for (Object o : Json.asList(graph.get("nodes"))) {
+            Map<String, Object> n = Json.asMap(o);
+            String nid = String.valueOf(n.get("id"));
+            if ("alert".equals(n.get("type")) && (nid.equals(chosen.node()) || reached.contains(nid))) {
+                out.addAll(key.equals("attack") ? AttackService.ids(n.get(key)) : D3fendService.ids(n.get(key)));
+            }
+        }
+        for (Map<String, Object> step : chosen.path()) {
+            for (String k : List.of("rule_id", "matched_rule_id")) {
+                RuleMeta m = step.get(k) == null ? null : meta.get(String.valueOf(step.get(k)));
+                if (m != null) {
+                    out.addAll(key.equals("attack") ? m.attack() : m.d3fend());
+                }
+            }
+        }
+        return List.copyOf(out);
     }
 
     public List<AlertService.Recorded> evaluateScenario(ScenarioRecord sc, Set<List<String>> targets, Set<HitKey> newKeys,
@@ -177,7 +225,7 @@ public class DetectionService {
         List<AlertService.Recorded> rec = new ArrayList<>();
         for (int i = 0; i < cases.size(); i++) {
             EvalCase c = cases.get(i);
-            AlertCandidate cand = scenarioCandidate(sc, c.orgId(), c.entity(), outs.get(i).chosen(), now);
+            AlertCandidate cand = scenarioCandidate(sc, c.orgId(), c.entity(), outs.get(i).chosen(), outs.get(i).reachedAlerts(), now, meta);
             if (cand != null) {
                 rec.add(alerts.recordAlert(cand, now));
             }

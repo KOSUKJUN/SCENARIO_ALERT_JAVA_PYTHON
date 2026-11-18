@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -22,7 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** M2: 단일룰 정의 검증. 잘못된 정의 20종 이상이 원인 메시지와 함께 거부되고, SQL 주입 시도가 거부된다. */
 class RuleValidatorTest {
     static final Set<String> LISTS = Set.of("smb_allowed_sources", "false_positive_hosts", "wannacry_killswitch_domains",
-            "threat_domains", "coinmining_pools", "threat_ip");
+            "threat_domains", "coinmining_pools", "threat_ip", "php2shell_request_markers", "web_cmd_output_markers",
+            "web_downloader_markers");
 
     static Map<String, Object> base() {
         return Json.loadMap("""
@@ -141,7 +143,8 @@ class RuleValidatorTest {
 
     @Test
     void builtinCount() {
-        // 원본 14 + 7 에 사고 사례 기반 7 + 6 을 더했다 (docs/cases.md)
-        assertTrue(TestFiles.builtinRules().size() == 21 && TestFiles.builtinScenarios().size() == 13);
+        // 원본 14 + 7 에 사고 사례 기반 7 + 6, PHP2Shell 3 + 1 을 더했다 (docs/cases.md)
+        assertEquals(24, TestFiles.builtinRules().size());
+        assertEquals(14, TestFiles.builtinScenarios().size());
     }
 }

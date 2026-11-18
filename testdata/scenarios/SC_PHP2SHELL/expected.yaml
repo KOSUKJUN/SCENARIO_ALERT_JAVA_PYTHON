@@ -1,0 +1,130 @@
+setup:
+  assets:
+    -
+      - "10.10.11.10"
+      -
+        - "webserver"
+    -
+      - "10.10.11.11"
+      -
+        - "webserver"
+    -
+      - "10.10.11.12"
+      -
+        - "webserver"
+    -
+      - "10.10.11.14"
+      -
+        - "webserver"
+    -
+      - "10.10.11.15"
+      -
+        - "webserver"
+    -
+      - "10.10.11.16"
+      -
+        - "webserver"
+    -
+      - "10.10.11.18"
+      -
+        - "webserver"
+    -
+      - "10.10.11.19"
+      -
+        - "webserver"
+    -
+      - "10.10.11.20"
+      -
+        - "webserver"
+    -
+      - "10.10.11.21"
+      -
+        - "webserver"
+    -
+      - "10.10.11.22"
+      -
+        - "webserver"
+  list_items:
+    -
+      - "false_positive_hosts"
+      - "10.10.11.16"
+alerts:
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.10"
+    severity: "critical"
+    case: "WAF PHP2Shell 탐지 + 3분 뒤 응답에 id 실행 결과"
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.11"
+    severity: "critical"
+    case: "php2shell-scan 요청 + 6분 뒤 웹서버의 Wget 내려받기"
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.12"
+    severity: "high"
+    case: "공격만, 웹서버"
+    counterexample: true
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.13"
+    severity: "medium"
+    case: "공격만, 웹서버 아님"
+    counterexample: true
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.14"
+    severity: "high"
+    case: "공격 91분 뒤 내려받기 (허용 1시간 밖)"
+    counterexample: true
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.19"
+    severity: "critical"
+    case: "실행·정찰 뒤 도구 반입 (ATT&CK 단계 누적)"
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.20"
+    severity: "critical"
+    case: "도구 반입 뒤 실행·정찰 (순서 반대, 누적)"
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.21"
+    severity: "critical"
+    case: "uname -a 결과만 (T1082)"
+  - source_id: "SC_PHP2SHELL"
+    entity: "10.10.11.22"
+    severity: "critical"
+    case: "처음 보는 외부 접속 (C2, T1071)"
+no_alert:
+  - entity: "10.10.11.15"
+    case: "표지 없는 정상 멀티파트 업로드"
+  - entity: "10.10.11.16"
+    case: "예외 리스트"
+  - entity: "198.51.100.240"
+    case: "목적지가 외부 (공격 대상이 내부 서버가 아님)"
+  - entity: "10.10.11.17"
+    case: "외부로 공격 요청을 보낸 내부 출발지 (대상은 목적지)"
+  - entity: "10.10.11.18"
+    case: "명령 실행 결과만 있고 앞선 PHP2Shell 공격 없음"
+hits:
+  SR_PHP2SHELL_EXPLOIT:
+    - "10.10.11.10"
+    - "10.10.11.11"
+    - "10.10.11.12"
+    - "10.10.11.13"
+    - "10.10.11.14"
+    - "10.10.11.19"
+    - "10.10.11.20"
+    - "10.10.11.21"
+    - "10.10.11.22"
+  SR_WEB_CMD_OUTPUT:
+    - "10.10.11.10"
+    - "10.10.11.18"
+    - "10.10.11.19"
+    - "10.10.11.20"
+    - "10.10.11.21"
+  SR_WEB_SERVER_DOWNLOAD:
+    - "10.10.11.11"
+    - "10.10.11.14"
+    - "10.10.11.19"
+    - "10.10.11.20"
+  SR_NEW_OUTBOUND:
+    - "10.10.11.11"
+    - "10.10.11.14"
+    - "10.10.11.19"
+    - "10.10.11.20"
+    - "10.10.11.22"
+note: "사례: PHP2Shell (CVE-2026-109618/109619, 2026-10). 업로드 진행 세션 멀티파트 공격 → 명령 실행 확인(PHP2SHELL_CONFIRMED, id) → /tmp 로 Wget 내려받기(Mirai 계열 봇넷). 기존 SC_WEB_ATTACK_SUCCESS 는 WAF 300건/분 폭증이 전제라 요청 몇 건의 표적 공격을 놓친다"

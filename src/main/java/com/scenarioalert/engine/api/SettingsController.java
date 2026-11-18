@@ -1,5 +1,6 @@
 package com.scenarioalert.engine.api;
 
+import com.scenarioalert.engine.InitService;
 import com.scenarioalert.engine.auth.AuthService;
 import com.scenarioalert.engine.auth.AuthService.User;
 import com.scenarioalert.engine.auth.RequireRole;
@@ -121,6 +122,75 @@ public class SettingsController {
     @RequireRole("admin")
     public Map<String, Object> updateOrg(@PathVariable String orgId, @RequestBody Map<String, Object> body, User user) {
         return saveOrg(orgId, body, user, false);
+    }
+
+    // ---------------------------------------------------------------- 로그 수집원 → 기관
+    static final Pattern ASSET_ID_RE = Pattern.compile("^[A-Za-z0-9._:\\-]{1,128}$");
+
+    /**
+     * 로그 수집원(원본 _asset_id) → 기관 매핑과, 최근 24시간에 이벤트가 있었지만 매핑이 없는 수집원.
+     * 매핑이 없는 수집원의 이벤트는 기관 UNASSIGNED(미지정)로 탐지된다.
+     */
+    @GetMapping("/log-sources")
+    @RequireRole("viewer")
+    public Map<String, Object> logSources() {
+        List<Map<String, Object>> items = db.rows("SELECT s.asset_id, s.org_id, o.name AS org_name, s.description, s.updated_by, "
+                + "s.updated_at FROM log_sources s JOIN orgs o ON o.org_id = s.org_id ORDER BY s.asset_id");
+        items.forEach(r -> r.put("updated_at", Kst.iso(Db.time(r, "updated_at"))));
+        TreeSet<String> mapped = new TreeSet<>();
+        items.forEach(r -> mapped.add(Db.str(r, "asset_id")));
+        List<Map<String, Object>> seen = ch.query("SELECT toString(_asset_id) AS asset_id, groupUniqArray(toString(_data_type)) "
+                + "AS data_types, count() AS events_24h, max(_collect_time) AS last_seen FROM " + InitService.SOURCE
+                + " WHERE _collect_time >= now() - INTERVAL 1 DAY GROUP BY asset_id ORDER BY events_24h DESC LIMIT 1000", Map.of());
+        List<Map<String, Object>> unmapped = new ArrayList<>();
+        Map<String, Long> seenCount = new HashMap<>();
+        for (Map<String, Object> r : seen) {
+            String a = ClickHouse.str(r, "asset_id");
+            seenCount.put(a, (long) ClickHouse.num(r, "events_24h"));
+            if (!mapped.contains(a)) {
+                unmapped.add(Json.obj("asset_id", a, "data_types", r.get("data_types"),
+                        "events_24h", seenCount.get(a), "last_seen", Kst.iso(ClickHouse.time(r, "last_seen"))));
+            }
+        }
+        items.forEach(r -> r.put("events_24h", seenCount.getOrDefault(Db.str(r, "asset_id"), 0L)));
+        return Json.obj("items", items, "unmapped", unmapped);
+    }
+
+    @PutMapping("/log-sources/{assetId}")
+    @RequireRole("admin")
+    public Map<String, Object> saveLogSource(@PathVariable String assetId, @RequestBody Map<String, Object> body, User user) {
+        if (!ASSET_ID_RE.matcher(assetId).matches()) {
+            throw new ApiException(400, "로그 수집원 ID 형식이 아닙니다 (영문·숫자·._:- 1~128자)");
+        }
+        String orgId = Body.str(body, "org_id");
+        String desc = Body.optStr(body, "description");
+        if (desc != null && desc.length() > 500) {
+            throw new ApiException(400, "설명은 500자 이하입니다");
+        }
+        db.txRun(() -> {
+            if (db.row("SELECT 1 AS x FROM orgs WHERE org_id=:o", p("o", orgId)) == null) {
+                throw new ApiException(400, "없는 기관입니다: " + orgId);
+            }
+            db.execute("INSERT INTO log_sources (asset_id, org_id, description, updated_by) VALUES (:a, :o, :d, :u) "
+                    + "ON DUPLICATE KEY UPDATE org_id=VALUES(org_id), description=VALUES(description), updated_by=VALUES(updated_by)",
+                    p("a", assetId, "o", orgId, "d", desc, "u", user.username()));
+            db.audit(user.username(), "log_source.save", assetId, Json.obj("org_id", orgId, "description", desc));
+        });
+        ch.reloadDictionaries(List.of("dict_log_sources"));
+        return Json.obj("asset_id", assetId, "org_id", orgId, "description", desc);
+    }
+
+    @DeleteMapping("/log-sources/{assetId}")
+    @RequireRole("admin")
+    public Map<String, Object> deleteLogSource(@PathVariable String assetId, User user) {
+        db.txRun(() -> {
+            if (db.execute("DELETE FROM log_sources WHERE asset_id=:a", p("a", assetId)) == 0) {
+                throw new ApiException(404, "매핑이 없습니다");
+            }
+            db.audit(user.username(), "log_source.delete", assetId, Map.of());
+        });
+        ch.reloadDictionaries(List.of("dict_log_sources"));
+        return Json.obj("deleted", true);
     }
 
     // ---------------------------------------------------------------- 기관별 룰 파라미터

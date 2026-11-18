@@ -9,12 +9,4 @@ CREATE TABLE IF NOT EXISTS detect.peer_first_seen
 ENGINE = AggregatingMergeTree
 ORDER BY (org_id, src_ip, dst_ip);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS detect.mv_peer_first_seen TO detect.peer_first_seen AS
-SELECT
-    toString(inst_id) AS org_id,
-    replaceRegexpOne(IPv6NumToString(assumeNotNull(s_info)), '^::ffff:', '') AS src_ip,
-    replaceRegexpOne(IPv6NumToString(assumeNotNull(d_info)), '^::ffff:', '') AS dst_ip,
-    min(mgr_time) AS first_seen
-FROM codlog.log_integrated_success_all
-WHERE isNotNull(s_info) AND isNotNull(d_info)
-GROUP BY org_id, src_ip, dst_ip;
+-- 이 표를 채우는 MV 는 views/031_mv_peer_first_seen.sql (로그 수집원 딕셔너리를 쓰므로 딕셔너리 뒤에 만든다).

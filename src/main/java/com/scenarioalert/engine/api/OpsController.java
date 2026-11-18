@@ -1,5 +1,6 @@
 package com.scenarioalert.engine.api;
 
+import com.scenarioalert.engine.InitService;
 import com.scenarioalert.engine.auth.AuthService;
 import com.scenarioalert.engine.auth.AuthService.User;
 import com.scenarioalert.engine.auth.RequireRole;
@@ -288,9 +289,9 @@ public class OpsController {
     @RequireRole("viewer")
     public Map<String, Object> sampleCatalog() {
         devEnabled();
-        List<Map<String, Object>> rs = ch.query("SELECT data_tp, count() AS rows, min(mgr_time) AS first, max(mgr_time) AS last "
-                + "FROM codlog.log_integrated_success_all WHERE mgr_time >= now() - INTERVAL 30 DAY GROUP BY data_tp ORDER BY data_tp",
-                Map.of(), Purpose.ADMIN);
+        List<Map<String, Object>> rs = ch.query("SELECT _data_type AS data_tp, count() AS rows, min(_collect_time) AS first, "
+                + "max(_collect_time) AS last FROM " + InitService.SOURCE + " WHERE _collect_time >= now() - INTERVAL 30 DAY "
+                + "GROUP BY data_tp ORDER BY data_tp", Map.of(), Purpose.ADMIN);
         rs.forEach(r -> {
             r.put("first", ClickHouse.time(r, "first"));
             r.put("last", ClickHouse.time(r, "last"));

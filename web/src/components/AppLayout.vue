@@ -15,6 +15,8 @@ const links = computed(() => {
     { to: '/single-rules', label: '단일룰', id: 'rules' },
     { to: '/scenarios', label: '시나리오 분석', id: 'scenarios' },
     { to: '/alerts', label: '경보', id: 'alerts' },
+    { to: '/attack', label: 'ATT&CK', id: 'attack' },
+    { to: '/d3fend', label: 'D3FEND 대응', id: 'd3fend' },
     { to: '/settings', label: '설정', id: 'settings' },
   ];
   if (auth.me?.dev_tools) l.push({ to: '/dev', label: '테스트 데이터', id: 'dev' });

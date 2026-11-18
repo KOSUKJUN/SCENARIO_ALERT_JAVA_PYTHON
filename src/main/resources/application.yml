@@ -22,6 +22,11 @@ spring:
     baseline-on-migrate: false
   jackson:
     time-zone: Asia/Seoul
+  # ATT&CK STIX 번들 업로드 (enterprise 는 약 55MB)
+  servlet:
+    multipart:
+      max-file-size: ${ATTACK_UPLOAD_MAX:200MB}
+      max-request-size: ${ATTACK_UPLOAD_MAX:200MB}
   mvc:
     servlet:
       path: /
@@ -53,6 +58,9 @@ app:
   public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
   # 저장소 루트 (clickhouse/, rules/ 를 찾는 위치). 컨테이너에서는 /app
   root-dir: ${APP_ROOT_DIR:.}
+  # MITRE ATT&CK STIX 번들을 두는 디렉터리 (폐쇄망 반입). 비우면 <root-dir>/data/attack. init 이 새 파일을 가져온다
+  attack-dir: ${ATTACK_DIR:}
+  d3fend-dir: ${D3FEND_DIR:}
   clickhouse:
     url: ${CH_URL:http://localhost:8123}
     user: ${CH_USER:detect}

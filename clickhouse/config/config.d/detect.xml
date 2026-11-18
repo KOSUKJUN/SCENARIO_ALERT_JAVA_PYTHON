@@ -11,4 +11,16 @@
             <db>detect</db>
         </mariadb_detect>
     </named_collections>
+    <!-- 테스트 전용: 운영 원본 테이블(Distributed)이 가리키는 클러스터 이름을 노드 하나로 흉내 낸다.
+         로컬 복제본이라 조회·적재는 네트워크 없이 이 노드의 log_integrated_success_store 로 간다 (prefer_localhost_replica). -->
+    <remote_servers>
+        <codvill_cluster>
+            <shard>
+                <replica>
+                    <host>localhost</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </codvill_cluster>
+    </remote_servers>
 </clickhouse>

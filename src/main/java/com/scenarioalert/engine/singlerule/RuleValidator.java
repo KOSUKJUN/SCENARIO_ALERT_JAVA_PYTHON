@@ -1,5 +1,7 @@
 package com.scenarioalert.engine.singlerule;
 
+import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.common.Ip;
 import com.scenarioalert.engine.common.Json;
 import com.scenarioalert.engine.common.Kst;
@@ -31,7 +33,8 @@ public final class RuleValidator {
     private static final Pattern RE2_UNSUPPORTED = Pattern.compile("\\(\\?<?[=!]|\\\\[1-9]");
     private static final Set<String> ALLOWED_KEYS = Set.of(
             "id", "name", "description", "type", "entity", "data_tp", "filter", "aggregate", "window", "threshold",
-            "min_count", "exclude_lists", "schedule", "alert_on_hit", "severity", "status", "suppress_for", "tags");
+            "min_count", "exclude_lists", "schedule", "alert_on_hit", "severity", "status", "suppress_for", "tags",
+            "attack", "d3fend");
 
     private RuleValidator() {
     }
@@ -434,6 +437,16 @@ public final class RuleValidator {
             }
         }
 
+        // MITRE ATT&CK 기법 ID (형식만. 활성 버전에 있는지는 저장 때 Repo 가 AttackService 로 검사한다)
+        String attackErr = AttackService.formatError(defn.get("attack"));
+        if (attackErr != null) {
+            res.err("attack", attackErr);
+        }
+        // 지정 대응방책: MITRE D3FEND 방어 기법 ID (형식만. 활성 버전에 있는지는 저장 때 Repo 가 D3fendService 로 검사한다)
+        String d3fendErr = D3fendService.formatError(defn.get("d3fend"));
+        if (d3fendErr != null) {
+            res.err("d3fend", d3fendErr);
+        }
         if (!(defn.getOrDefault("alert_on_hit", false) instanceof Boolean)) {
             res.err("alert_on_hit", "true 또는 false 입니다");
         }

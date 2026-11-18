@@ -28,16 +28,20 @@ MIN = 60_000
 
 def ev(r: random.Random, dtp: str, t_ms: int, src: str, dst: str, *, dport=None, direction="", action="allow", method="",
        attack="", payload="", risk="low", uri="", url_method="") -> dict:
-    return {
-        "inst_id": ORG, "data_tp": dtp, "log": dtp.lower(), "product": PRODUCTS[dtp],
-        "s_info": src, "d_info": dst,
-        "s_port": (30000 + r.randint(0, 35000)) if dtp in HAS_SPORT else None,
-        "d_port": dport if dtp in HAS_DPORT else None,
-        "protocol": "tcp", "action": action, "mstatus": "", "direction": direction, "method": method,
-        "attack": attack, "risk": risk, "count": None if dtp in NO_COUNT else 1,
-        "uri": uri, "url_method": url_method, "payload": payload if dtp in HAS_PAYLOAD else "",
-        "offset_ms": t_ms + 300 + r.randint(0, 2200), "event_offset_ms": t_ms,
-    }
+    # 운영 원본 키: _data_type, _asset_id(로그 수집원, 기관은 log_sources 매핑), 공통 필드 + fields(JSON, 값은 문자열).
+    # 값이 없는 키는 생략한다 (운영처럼 NULL). count 는 fields 안에 있다.
+    e = {"_data_type": dtp, "_asset_id": f"{ORG}_{dtp}_LOGSRC", "src_ip": src, "dst_ip": dst,
+         "src_port": (30000 + r.randint(0, 35000)) if dtp in HAS_SPORT else None,
+         "dst_port": dport if dtp in HAS_DPORT else None,
+         "protocol": "tcp", "method": method, "attack": attack}
+    fields = {"count": None if dtp in NO_COUNT else "1", "log": dtp.lower(), "product": PRODUCTS[dtp], "action": action,
+              "direction": direction, "risk": risk, "uri": uri, "url_method": url_method,
+              "payload": payload if dtp in HAS_PAYLOAD else ""}
+    out = {k: v for k, v in e.items() if v not in (None, "")}
+    out["fields"] = {k: v for k, v in fields.items() if v not in (None, "")}
+    out["offset_ms"] = t_ms + 300 + r.randint(0, 2200)
+    out["event_offset_ms"] = t_ms
+    return out
 
 
 def ext(r: random.Random, n: int, third: str = "198.51.100") -> list[str]:
@@ -102,6 +106,30 @@ def admin_port_multi(r, t0, server, srcs):
 def ssh_success(r, t0, server):
     return [ev(r, "IDS", t0, "198.51.100.31", server, direction="inbound", action="alert", method="SSH Login Successful",
                payload="Accepted password for root", risk="medium")]
+
+
+# ---- PHP2Shell (CVE-2026-109618/109619). SampleDataService 의 php2shellExploit / webCmdOutput / webDownload 와 같은 모양
+def php2shell_exploit(r, t0, attacker, server, scanner=False):
+    if scanner:
+        return [ev(r, "IPS", t0, attacker, server, dport=443, direction="inbound", action="detect",
+                   method="HTTP POST Multipart Upload", attack="Suspicious File Upload", uri="/", url_method="POST",
+                   payload='POST / HTTP/1.1 User-Agent: php2shell-scan/109618 Content-Type: multipart/form-data '
+                           'name="PHP_SESSION_UPLOAD_PROGRESS" P2SFNAME P2SVALUE', risk="high")]
+    return [ev(r, "WAF", t0, attacker, server, direction="inbound", action="detect",
+               method="PHP2Shell Upload Progress Use-After-Free (CVE-2026-109619)", attack="Remote Code Execution",
+               uri="/index.php", url_method="POST",
+               payload='POST /index.php Content-Type: multipart/form-data name="PHP_SESSION_UPLOAD_PROGRESS" t[]=AAAA t[]=AAAA',
+               risk="high")]
+
+
+def web_cmd_output(r, t0, server, attacker, out="PHP2SHELL_CONFIRMED uid=33(www-data) gid=33(www-data) groups=33(www-data)"):
+    return [ev(r, "IDS", t0, server, attacker, direction="outbound", action="alert", method="HTTP Response Command Output",
+               payload="HTTP/1.1 200 OK " + out, risk="high")]
+
+
+def web_download(r, t0, server, dst):
+    return [ev(r, "IPS", t0, server, dst, dport=80, direction="outbound", action="allow", method="HTTP GET",
+               payload="GET /nfs-setup HTTP/1.1 Host: dl.example User-Agent: Wget/1.21.4", risk="medium")]
 
 
 def alert(sid, entity, sev, case, counterexample=False):
@@ -282,6 +310,66 @@ def main() -> None:
                      {"entity": "10.10.9.14", "case": "호스트별로는 목적지 5개"}],
         "hits": {"SR_TI_HIT": ["10.10.9.10", "10.10.9.11"]},
         "note": "사례: PC 4대 동시 감염 (호스트 단위 룰로는 각각 임계치 미달). 새 기능: 대상 유형 org (기관 단위 집계)",
+    })
+
+    # ---- SC_PHP2SHELL (대상 = 공격받은 내부 서버). 10.10.11.x 대역, 공격자 203.0.113.120~, 내려받기 서버 203.0.113.130
+    ev_ = []
+    ev_ += php2shell_exploit(r, 60 * MIN, "203.0.113.120", "10.10.11.10")              # + 3분 뒤 응답에 명령 실행 결과 → 긴급
+    ev_ += web_cmd_output(r, 63 * MIN, "10.10.11.10", "203.0.113.120")
+    ev_ += php2shell_exploit(r, 64 * MIN, "203.0.113.121", "10.10.11.11", scanner=True)  # 스캐너 + 6분 뒤 Wget 내려받기 → 긴급
+    ev_ += web_download(r, 70 * MIN, "10.10.11.11", "203.0.113.130")
+    ev_ += php2shell_exploit(r, 66 * MIN, "203.0.113.122", "10.10.11.12")              # 공격만, 웹서버 → 높음
+    ev_ += php2shell_exploit(r, 68 * MIN, "203.0.113.123", "10.10.11.13")              # 공격만, 웹서버 아님 → 중간
+    # 91분 뒤 내려받기 (허용 1시간 밖) → 높음. 10분 창 룰은 1분마다 미끄러지며 평가돼 히트 구간이 다음 10분까지 남으므로
+    # (5분 공격 → 구간 [0,10), [10,20)) 실제 판정 범위는 최대 1시간 10분이다. 경계에서 충분히 떨어뜨린다.
+    ev_ += php2shell_exploit(r, 5 * MIN, "203.0.113.124", "10.10.11.14")
+    ev_ += web_download(r, 96 * MIN, "10.10.11.14", "203.0.113.130")
+    ev_ += [ev(r, "WAF", 72 * MIN, "203.0.113.125", "10.10.11.15", direction="inbound", action="detect",
+               method="File Upload Inspection", attack="File Upload", uri="/board/upload.php", url_method="POST",
+               payload='POST /board/upload.php Content-Type: multipart/form-data name="attach" filename="report.pdf"')]  # 정상 업로드
+    ev_ += php2shell_exploit(r, 74 * MIN, "203.0.113.126", "10.10.11.16")              # 예외 리스트
+    ev_ += php2shell_exploit(r, 76 * MIN, "10.10.11.17", "198.51.100.240", scanner=True)  # 내부 → 외부 (목적지가 외부)
+    ev_ += web_cmd_output(r, 78 * MIN, "10.10.11.18", "203.0.113.127",
+                          out="uid=0(root) gid=0(root) groups=0(root)")                   # 명령 결과만, 앞선 공격 없음
+    # v2 (ATT&CK 단계 연계): 단계가 차례로 보이면 경보의 기법이 누적된다 (순서 무관)
+    ev_ += php2shell_exploit(r, 80 * MIN, "203.0.113.128", "10.10.11.19")              # 초기 침투 → 실행·정찰 → 도구 반입
+    ev_ += web_cmd_output(r, 82 * MIN, "10.10.11.19", "203.0.113.128")
+    ev_ += web_download(r, 88 * MIN, "10.10.11.19", "203.0.113.131")
+    ev_ += php2shell_exploit(r, 84 * MIN, "203.0.113.129", "10.10.11.20")              # 초기 침투 → 도구 반입 → 실행·정찰
+    ev_ += web_download(r, 86 * MIN, "10.10.11.20", "203.0.113.132")
+    ev_ += web_cmd_output(r, 92 * MIN, "10.10.11.20", "203.0.113.129")
+    ev_ += php2shell_exploit(r, 94 * MIN, "203.0.113.133", "10.10.11.21")              # uname -a 결과만 (T1082)
+    ev_ += web_cmd_output(r, 96 * MIN, "10.10.11.21", "203.0.113.133",
+                          out="Linux web01 5.15.0-91-generic #101-Ubuntu SMP Tue Nov 14 13:30:08 UTC 2023 x86_64 GNU/Linux")
+    ev_ += php2shell_exploit(r, 98 * MIN, "203.0.113.134", "10.10.11.22")              # 내려받기 표지 없는 처음 보는 외부 접속 (C2)
+    ev_ += [ev(r, "IPS", 100 * MIN, "10.10.11.22", "203.0.113.135", dport=443, direction="outbound", method="TLS Client Hello",
+               payload="TLS ClientHello SNI=cdn-update.example")]
+    write("SC_PHP2SHELL", ev_, {
+        "setup": {"assets": [[h, ["webserver"]] for h in
+                             ["10.10.11.10", "10.10.11.11", "10.10.11.12", "10.10.11.14", "10.10.11.15", "10.10.11.16",
+                              "10.10.11.18", "10.10.11.19", "10.10.11.20", "10.10.11.21", "10.10.11.22"]],
+                  "list_items": [["false_positive_hosts", "10.10.11.16"]]},
+        "alerts": [alert("SC_PHP2SHELL", "10.10.11.10", "critical", "WAF PHP2Shell 탐지 + 3분 뒤 응답에 id 실행 결과"),
+                   alert("SC_PHP2SHELL", "10.10.11.11", "critical", "php2shell-scan 요청 + 6분 뒤 웹서버의 Wget 내려받기"),
+                   alert("SC_PHP2SHELL", "10.10.11.12", "high", "공격만, 웹서버", counterexample=True),
+                   alert("SC_PHP2SHELL", "10.10.11.13", "medium", "공격만, 웹서버 아님", counterexample=True),
+                   alert("SC_PHP2SHELL", "10.10.11.14", "high", "공격 91분 뒤 내려받기 (허용 1시간 밖)", counterexample=True),
+                   alert("SC_PHP2SHELL", "10.10.11.19", "critical", "실행·정찰 뒤 도구 반입 (ATT&CK 단계 누적)"),
+                   alert("SC_PHP2SHELL", "10.10.11.20", "critical", "도구 반입 뒤 실행·정찰 (순서 반대, 누적)"),
+                   alert("SC_PHP2SHELL", "10.10.11.21", "critical", "uname -a 결과만 (T1082)"),
+                   alert("SC_PHP2SHELL", "10.10.11.22", "critical", "처음 보는 외부 접속 (C2, T1071)")],
+        "no_alert": [{"entity": "10.10.11.15", "case": "표지 없는 정상 멀티파트 업로드"},
+                     {"entity": "10.10.11.16", "case": "예외 리스트"},
+                     {"entity": "198.51.100.240", "case": "목적지가 외부 (공격 대상이 내부 서버가 아님)"},
+                     {"entity": "10.10.11.17", "case": "외부로 공격 요청을 보낸 내부 출발지 (대상은 목적지)"},
+                     {"entity": "10.10.11.18", "case": "명령 실행 결과만 있고 앞선 PHP2Shell 공격 없음"}],
+        "hits": {"SR_PHP2SHELL_EXPLOIT": ["10.10.11.10", "10.10.11.11", "10.10.11.12", "10.10.11.13", "10.10.11.14",
+                                          "10.10.11.19", "10.10.11.20", "10.10.11.21", "10.10.11.22"],
+                 "SR_WEB_CMD_OUTPUT": ["10.10.11.10", "10.10.11.18", "10.10.11.19", "10.10.11.20", "10.10.11.21"],
+                 "SR_WEB_SERVER_DOWNLOAD": ["10.10.11.11", "10.10.11.14", "10.10.11.19", "10.10.11.20"],
+                 "SR_NEW_OUTBOUND": ["10.10.11.11", "10.10.11.14", "10.10.11.19", "10.10.11.20", "10.10.11.22"]},
+        "note": "사례: PHP2Shell (CVE-2026-109618/109619, 2026-10). 업로드 진행 세션 멀티파트 공격 → 명령 실행 확인(PHP2SHELL_CONFIRMED, id) "
+                "→ /tmp 로 Wget 내려받기(Mirai 계열 봇넷). 기존 SC_WEB_ATTACK_SUCCESS 는 WAF 300건/분 폭증이 전제라 요청 몇 건의 표적 공격을 놓친다",
     })
 
 

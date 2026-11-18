@@ -93,6 +93,69 @@ def evaluate(hits, asset_tags):
 | 그래프 검증 | — | `description`, `label` 길이·타입 검사 추가 | 생성 코드에 들어가는 값이라 미리 거른다 |
 | 화면 | — | 버전 탭에 "Python 코드" 보기 | 생성 결과를 바로 확인 |
 | 대상 유형 | host (src_ip, dst_ip) | host + **org (org_id)** | 사고 사례 "PC 여러 대 동시 감염"은 기관 단위 집계가 필요하다 ([cases.md](cases.md) 2장) |
-| 기본 룰·순서도 | 14 + 7 | 21 + 13 | 사고 사례 12건을 대입해 7 + 6 추가, 1개 수정 ([cases.md](cases.md) 1장) |
+| 기본 룰·순서도 | 14 + 7 | 24 + 14 | 사고 사례 12건을 대입해 7 + 6 추가, 1개 수정 ([cases.md](cases.md) 1장). PHP2Shell 3 + 1 추가 (5장) |
+| 원본 이벤트 테이블 | `codlog.log_integrated_success_all`, 필드마다 컬럼 | 운영과 같은 `default.log_integrated_success_all` (Distributed, `fields` JSON, 기관은 로그 수집원 매핑) | 운영 스키마에 맞춤 (2026-11-17). 아래 5장 |
 
-미결 사항(운영 데이터 필드 채움 비율, inst_id 대응표, 사고처리 시스템 API 규격, 실제 EPS)은 원본과 같다.
+## 5. 원본 이벤트 테이블 (운영 구조, 2026-11-17)
+
+운영 ClickHouse(25.3, 클러스터 `codvill_cluster`)의 `default.log_integrated_success_all` 과 **같은 이름·구조**를 쓴다
+(테스트 사본: [clickhouse/source/001](../clickhouse/source/001_log_integrated_success_all.sql), 운영 `system.columns`·엔진·정렬 키와 비교해 동일함을 확인).
+
+| 운영 원본 | 탐지 뷰(`detect.v_events`) | 비고 |
+|---|---|---|
+| `log_integrated_success_all` (Distributed) → `log_integrated_success_store` (MergeTree, `ORDER BY (_collect_time, _parser_cd, _asset_id)`) | 뷰는 Distributed 를 읽는다 | 테스트 환경은 노드 하나짜리 `codvill_cluster` (config.d/detect.xml) |
+| `_event_cd` | `event_id` | |
+| `_collect_time` | `mgr_time` (평가 시간축) | |
+| `_data_type` | `data_tp` | |
+| `_asset_id` (로그 수집원) | `log_source`, **`org_id` = MariaDB `log_sources` 매핑** (딕셔너리 `dict_log_sources`) | 원본에 기관 컬럼이 없다. 매핑 없는 수집원은 `UNASSIGNED`(미지정) 기관으로 탐지 |
+| 공통 필드 (모두 Nullable): event_time, event_type, origin_*, src_ip/port/iso/lat/lng, dst_ip/port, protocol, attack, category, method | 같은 이름 (NULL → '' 또는 NULL 유지) | `src_lat`/`src_lng` 는 문자열 |
+| `fields` (**JSON 타입**) | `ifNull(toString(fields.키), '')` 로 action·risk·payload·uri·url_method… | `count` 도 fields 안의 문자열 (없으면 1건) |
+| `_raw_log`, `_parser_cd`, `_origin_topic`, `_parser_node`, `_init_build_flag` | 쓰지 않음 | 수집 경로 정보 |
+
+- 출력 컬럼은 이전과 같아(+ `log_source`) 단일룰·컴파일러·SQL 스냅샷은 바뀌지 않았다. `search_text` 는 뷰가 계산한다(운영 원본에 인덱스 없음).
+- 최초 관측 MV(`views/031`)는 노드의 store 테이블에 건다. 기관은 적재 시점의 수집원 매핑을 따른다.
+- 테스트 적재(샘플·통합 테스트)는 store 테이블에 바로 넣는다: Distributed 적재는 기본이 비동기라 넣은 직후 조회가 어긋날 수 있다. 운영 적재는 수집 파이프라인이 한다.
+- 수집원 매핑: 설정 > **로그 수집원** (admin). 최근 24시간 이벤트가 있는데 매핑이 없는 수집원을 보여 주고 바로 지정한다. 변경은 딕셔너리를 다시 읽어 1분 안에 반영된다.
+- 테스트 환경 ClickHouse 를 운영과 같은 25.3.2.39 로 올렸다 (JSON 타입). 예전 사본(`codlog.*`)은 init 이 지우고 샘플을 다시 넣는다.
+- 2026-11-17 운영 데이터 관찰: WAF 의 조치 값(ALLOW 등)이 `fields.url_method` 키로 들어오고, TMS·WEB 은 원문 외 필드가 대부분 NULL 이다. 파서 매핑을 확인해야 탐지 룰이 동작한다.
+
+## 6. MITRE ATT&CK (폐쇄망 내부 사본, 버전 관리)
+
+MITRE 공식 STIX 2.1 번들(mitre-attack/attack-stix-data 의 `enterprise-attack-<버전>.json`, ics·mobile 도 가능)을 MariaDB 에
+버전별로 넣어 쓴다. 탐지 중에는 인터넷을 쓰지 않는다.
+
+| 항목 | 내용 |
+|---|---|
+| 저장 | `attack_versions`(도메인·버전·파일 sha256·활성 여부), `attack_objects`(전술 TA, 기법·하위 기법 T, 완화 M, 그룹 G, 소프트웨어 S, 탐지 전략 DET), `attack_relations`(기법을 향한 mitigates·detects·uses). Flyway V3 |
+| 반입 | 인터넷 PC 에서 `scripts\fetch_attack.ps1 -Version 20.1` → 파일을 서버 `ATTACK_DIR`(기본 `data/attack`, compose 가 `/app/data/attack` 로 연결)에 복사하면 `init` 이 가져온다. 또는 화면 ATT&CK > 버전 관리에서 올린다 (admin) |
+| 버전 | 도메인마다 활성 버전은 하나. 같은 파일은 다시 넣지 않고(sha256), 같은 버전의 다른 파일은 거부한다. 처음 가져온 도메인은 바로 활성, init 은 가장 높은 버전을 활성화한다. 활성 버전은 지울 수 없다 |
+| 비교 | 활성화 전에 활성 버전과 비교: 추가·없어짐·폐기(대체 기법)·사용 중단·이름·전술 변경과, **현재 룰·순서도가 참조하는 기법 중 영향받는 것** |
+| 룰·순서도 | 단일룰 정의의 `attack: [T1190]`, 순서도 경보 노드의 `attack`. 형식은 검증기가, 존재 여부는 저장 때 활성 버전으로 검사 (없거나 폐기면 오류, 사용 중단이면 경고, 데이터가 없으면 경고만) |
+| 경보 | 기법 = 고른 경보 노드의 attack + **경로에서 실제로 성립한 룰**의 attack + 같은 평가에서 함께 성립한 경보 노드의 attack. 억제 시간 안에 같은 대상의 다음 단계가 보이면 등급이 같아도 기법을 누적하고 다시 전달한다(전달 중 기법이 바뀌면 그 전달 결과로 덮어쓰지 않는다). 만들 때(등급 상향 때) 활성 버전의 이름·전술과 버전을 `alerts.attack`, `alerts.attack_version` 에 함께 저장한다(나중에 버전이 바뀌어도 경보 내용은 그대로). 사고처리 시스템 전달 내용에도 들어간다 |
+| 화면 | ATT&CK 메뉴: 탐지 커버리지 매트릭스(전술 × 기법, 단일룰/순서도/30일 경보 수), 기법 찾기·상세(완화, 탐지 전략, 그룹, 소프트웨어, 이 시스템의 탐지), 버전 관리. 룰 편집기·순서도 경보 노드에 기법 고르기, 경보 목록 필터(상위 기법이면 하위 포함)·상세 표시 |
+
+설계 원칙과의 관계: ATT&CK 은 경보에 붙는 설명 정보라 탐지 판정(단일룰 SQL, 순서도 생성 코드)을 바꾸지 않는다.
+생성 코드에는 들어가지 않으므로 GENERATOR 버전도 그대로다. 서버는 활성 버전을 메모리에 두지 않고 매번 DB 에서 읽는다(서버·worker 여러 대가 같은 버전을 본다).
+기본 룰 23개에 기법을 달았다(P2P 는 정책 위반이라 매핑하지 않음). 테스트는 공식 19.2·20.1 번들에서 잘라 낸 작은 번들(`src/test/resources/attack`)을 쓴다.
+
+## 7. MITRE D3FEND 대응방책 (폐쇄망 내부 사본, 버전 관리, 2026-11-18)
+
+MITRE D3FEND 공식 릴리스를 MariaDB 에 버전별로 넣고, ATT&CK 기법과 이어서 경보의 대응방책으로 쓴다.
+한 버전은 두 파일이다: 온톨로지 `d3fend.json`(JSON-LD: 전술, 방어 기법 D3-xxx, ATT&CK 완화 M 과의 관계)과
+D3FEND 가 추론한 ATT&CK 매핑 `d3fend-full-mappings.csv`(ATT&CK 기법 ↔ 방어 기법, 디지털 아티팩트 근거).
+
+| 항목 | 내용 |
+|---|---|
+| 저장 | `d3fend_versions`(버전·두 파일 sha256·활성), `d3fend_tactics`, `d3fend_techniques`(상위 기법·깊이·전술·정의·KB 설명), `d3fend_attack_map`(ATT&CK → 방어 기법, enterprise/ics, 근거 3개까지), `d3fend_mitigation_map`(ATT&CK M ↔ 방어 기법). 경보 `alerts.d3fend`, `alerts.d3fend_version`. Flyway V5 |
+| 읽기 | 방어 기법 = `d3fend-id` 가 `D3-` 인 노드. 상위 = subClassOf 의 다른 방어 기법, 전술 = 자신이나 조상의 `d3f:enables`. 전술에 닿지 않는 노드(분석 모델 D3-ARMA 등, 분석 기법 D3A-)는 대응방책이 아니라 뺀다. 매핑 CSV 는 `query_def_tech_label`(이름)로 온톨로지와 잇고 SPARTA 행은 버린다 |
+| 반입 | 인터넷 PC 에서 `scripts\fetch_d3fend.ps1 -Version 1.6.0` → `data/d3fend/<버전>/` 폴더째 서버 `D3FEND_DIR`(기본 `data/d3fend`)에 복사하면 `init` 이 가져온다(ATT&CK 다음, 기본 룰 앞). 또는 화면 D3FEND 대응 > 버전 관리에서 두 파일을 올린다 (admin) |
+| 버전 | 활성 버전 하나. 같은 파일 쌍은 다시 넣지 않고, 같은 버전의 다른 파일은 거부. 활성 버전은 지울 수 없다. 비교: 기법 추가·없어짐·이름·전술/상위 변경, 정의 갱신, 매핑 증감, **지정 대응방책 중 없어지는 기법** |
+| 지정 대응방책 | 단일룰 정의의 `d3fend: [D3-NI, D3-PT]`, 순서도 경보 노드의 `d3fend`. 형식은 검증기가, 존재 여부는 저장 때 활성 버전으로 검사(없으면 오류, 데이터가 없으면 경고). 편집 화면에서 ATT&CK 기법 기준 사고 대응 기법을 추천한다 |
+| 경보 | 지정 대응방책 = ATT&CK 과 같은 범위(고른·함께 성립한 경보 노드 + 경로에서 성립한 룰). 생성·상향 때 이름·전술·버전을 스냅샷으로 저장하고, 억제 시간 안에 다음 단계가 보이면 누적해 다시 전달한다. 사고처리 시스템 전달 내용에 `d3fend`, `d3fend_version` 이 들어간다 |
+| 권고 대응방책 | `POST /api/v1/d3fend/countermeasures {attack, d3fend}`: 활성 버전의 매핑으로 계산(경보에 저장하지 않는다). 전술 순서 격리 → 퇴출 → 복구(사고 대응) → 탐지 → 강화 → 기만 → 모델링, 전술 안에서는 지정 → ATT&CK 완화(M)와 연결된 권고 → 더 많은 기법에 대응. 하위 기법(T1059.004)에 매핑이 없으면 상위(T1059)를 쓴다 |
+| 화면 | D3FEND 대응 메뉴: 대응 기법 매트릭스(전술 × 기법 트리, 매핑 수/지정 수), 대응방책 연계(룰·경보 노드별 ATT&CK·지정, 사고 대응 지정 없는 곳 거르기, 권고 보기), 버전 관리. 경보 상세의 "대응방책" 카드, ATT&CK 기법 상세의 "D3FEND 대응 기법" |
+
+경보의 "대응 절차"(playbook)는 사람이 쓴 글로 그대로 두고, D3FEND 는 그 옆에 구조화된 대응 기법으로 붙는다.
+ATT&CK 과 같이 탐지 판정을 바꾸지 않는 메타데이터라 생성 코드·GENERATOR 버전은 그대로다.
+기본 룰 9개와 SC_PHP2SHELL 경보 노드 5개에 지정 대응방책을 달았다(이미 설치된 환경은 기본 룰을 덮어쓰지 않으므로 화면에서 추가한다).
+테스트는 공식 1.5.0·1.6.0 에서 잘라 낸 릴리스(`src/test/resources/d3fend`, `scripts/make_d3fend_fixture.py`)를 쓴다.

@@ -120,7 +120,7 @@ public class ClickHouse {
     public void reloadDictionaries(Collection<String> names) {
         List<String> targets = names == null || names.isEmpty()
                 ? List.of("dict_orgs", "dict_assets", "dict_list_items", "dict_threat_ip", "dict_signature_map",
-                "dict_org_rule_params")
+                "dict_org_rule_params", "dict_log_sources")
                 : List.copyOf(names);
         for (String n : targets) {
             try {

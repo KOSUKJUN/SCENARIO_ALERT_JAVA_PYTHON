@@ -20,7 +20,8 @@
             <quota>default</quota>
             <networks><ip>::/0</ip></networks>
             <grants>
-                <query>GRANT SELECT ON codlog.*</query>
+                <query>GRANT SELECT ON default.log_integrated_success_all</query>
+                <query>GRANT SELECT ON default.log_integrated_success_store</query>
                 <query>GRANT SELECT, INSERT, ALTER DELETE, dictGet ON detect.*</query>
                 <query>GRANT SYSTEM RELOAD DICTIONARY ON *.*</query>
             </grants>
@@ -31,7 +32,8 @@
             <quota>default</quota>
             <networks><ip>::/0</ip></networks>
             <grants>
-                <query>GRANT SELECT ON codlog.*</query>
+                <query>GRANT SELECT ON default.log_integrated_success_all</query>
+                <query>GRANT SELECT ON default.log_integrated_success_store</query>
                 <query>GRANT SELECT, INSERT, ALTER DELETE, dictGet ON detect.*</query>
             </grants>
         </detect_bt>
