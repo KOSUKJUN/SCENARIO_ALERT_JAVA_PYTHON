@@ -2,8 +2,9 @@
 // ATT&CK 버전 관리 (admin): 번들 올리기 / 서버 디렉터리에서 가져오기, 활성 버전과 비교(룰·순서도 영향), 활성화, 삭제.
 // 폐쇄망 반입: 인터넷이 되는 PC 에서 scripts/fetch_attack 로 받은 enterprise-attack-<버전>.json 을 올리거나
 // 서버의 ATTACK_DIR(기본 data/attack)에 복사한다.
+// 다른 서버로 옮기기: 버전마다 "내보내기" 로 패키지(zip)를 받아, 받는 서버에서 "패키지 가져오기" 로 올리거나 ATTACK_DIR 에 둔다.
 import { computed, ref } from 'vue';
-import { api, enc, upload } from '../../api';
+import { api, download, enc, upload } from '../../api';
 import { STATUS_KO } from '../../attack';
 import { has } from '../../auth';
 import { useAsync } from '../../composables';
@@ -18,9 +19,11 @@ import { fmtTime } from '../../util';
 
 const admin = computed(() => has('admin'));
 const vs = useAsync(() => api.get<{ versions: AttackVersion[]; active: Record<string, string> }>('/attack/versions'));
+interface DirFile { file: string; size: number; package: boolean; valid: boolean; imported: boolean; domain: string | null; version: string | null }
 const files = useAsync(() =>
-  admin.value ? api.get<{ dir: string; files: { file: string; size: number; imported: boolean; version: string | null }[] }>('/attack/files')
-    : Promise.resolve(null));
+  admin.value ? api.get<{ dir: string; files: DirFile[] }>('/attack/files') : Promise.resolve(null));
+const pkg = ref<File | null>(null);
+const pkgKey = ref(0); // 올린 뒤 파일 입력을 비운다 (같은 파일을 다시 고를 수 있게)
 const err = ref<unknown>(null);
 const msg = ref<string | null>(null);
 const busy = ref(false);
@@ -63,6 +66,21 @@ const doUpload = () =>
     file.value = null;
     return summaryText(r);
   }, '가져왔습니다');
+const doUploadPackage = () =>
+  act(async () => {
+    if (!pkg.value) throw new Error('패키지 파일을 고르세요');
+    const fd = new FormData();
+    fd.append('file', pkg.value);
+    const r = await upload<{ domain: string; version: string; status: string; is_active: boolean }>('/attack/versions/import-package', fd);
+    pkg.value = null;
+    pkgKey.value++;
+    return summaryText(r);
+  }, '가져왔습니다');
+const exportVersion = (v: AttackVersion) =>
+  act(async () => {
+    await download(`/attack/versions/${enc(v.domain)}/${enc(v.version)}/export`, `attack_${v.domain}_${v.version}.zip`);
+    return `${v.domain} ${v.version} 패키지를 내려받았습니다. 다른 서버의 ATT&CK > 버전 관리에서 올리거나 ATTACK_DIR 에 두세요`;
+  }, '내려받았습니다');
 const importFile = (name: string) =>
   act(async () => {
     const r = await api.post<{ domain: string; version: string; status: string; is_active: boolean }>('/attack/files/import', { file: name });
@@ -116,6 +134,8 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
             <td class="small">{{ v.imported_by }} {{ fmtTime(v.imported_at) }}</td>
             <td class="small" :title="v.source_sha256">{{ v.source_file }}<br /><span class="mono muted">{{ v.source_sha256.slice(0, 12) }}…</span></td>
             <td class="nowrap">
+              <button v-if="admin" class="small" :disabled="busy" :data-testid="`attack-export-${v.version}`"
+                title="다른 서버로 옮길 패키지(zip) 내려받기" @click="exportVersion(v)">내보내기</button>
               <button v-if="!v.is_active" class="small" :disabled="busy" :data-testid="`attack-diff-${v.version}`" @click="openDiff(v)">비교·활성화</button>
               <button v-if="admin && !v.is_active" class="small danger" :disabled="busy" :data-testid="`attack-delete-${v.version}`" @click="remove(v)">삭제</button>
             </td>
@@ -136,17 +156,27 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
           <input v-model="verOverride" placeholder="버전 (번들에 없을 때만)" style="width: 170px" />
           <button class="primary" :disabled="busy || !file" data-testid="attack-upload" @click="doUpload">가져오기</button>
         </div>
-        <p v-if="busy" class="muted small">가져오는 중… (enterprise 번들은 수십 초 걸립니다)</p>
+        <h4>다른 서버에서 내보낸 패키지</h4>
+        <p class="muted small">
+          다른 서버의 버전 목록에서 "내보내기" 로 받은 <span class="mono">attack_&lt;도메인&gt;_&lt;버전&gt;.zip</span>.
+          원본 번들의 sha256 이 그대로 들어 있어, 같은 원본으로 이미 가져온 버전은 다시 넣지 않습니다.
+        </p>
+        <div class="form-row">
+          <input :key="pkgKey" type="file" accept=".zip,application/zip" data-testid="attack-package-file" @change="pkg = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+          <button class="primary" :disabled="busy || !pkg" data-testid="attack-package-upload" @click="doUploadPackage">패키지 가져오기</button>
+        </div>
+        <p v-if="busy" class="muted small">처리 중… (enterprise 번들은 수십 초 걸립니다)</p>
       </CardBox>
       <CardBox title="서버 디렉터리의 파일">
-        <p class="muted small">서버의 <span class="mono">{{ files.data.value?.dir }}</span> 에 복사한 번들. init 때 새 파일을 자동으로 가져옵니다.</p>
+        <p class="muted small">서버의 <span class="mono">{{ files.data.value?.dir }}</span> 에 복사한 번들(.json)과 내보내기 패키지(.zip). init 때 새 파일을 자동으로 가져옵니다.</p>
         <table class="table">
           <tbody>
             <tr v-for="f in files.data.value?.files ?? []" :key="f.file">
-              <td class="mono small">{{ f.file }}</td>
+              <td class="mono small">{{ f.file }} <span v-if="f.package" class="chip">패키지</span></td>
               <td class="num small">{{ mb(f.size) }}</td>
               <td>
                 <span v-if="f.imported" class="muted small">가져옴 ({{ f.version }})</span>
+                <span v-else-if="!f.valid" class="warn-text small">ATT&amp;CK 패키지 아님</span>
                 <button v-else class="small" :disabled="busy" :data-testid="`attack-import-${f.file}`" @click="importFile(f.file)">가져오기</button>
               </td>
             </tr>

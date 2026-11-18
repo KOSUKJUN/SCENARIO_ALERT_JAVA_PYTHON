@@ -63,6 +63,33 @@ test('ATT&CK 버전 비교·활성화 (19.2 ↔ 20.1)', async ({ page }) => {
   await expect(page.getByTestId('attack-version-20.1')).toContainText('활성');
 });
 
+test('ATT&CK 버전 내보내기 → 삭제 → 패키지로 다시 가져오기', async ({ page }) => {
+  test.setTimeout(180_000);
+  await login(page);
+  await page.goto('/attack/versions');
+  const row = page.getByTestId('attack-version-19.2');
+  const sha = await row.locator('td[title]').getAttribute('title');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('attack-export-19.2').click()]);
+  expect(dl.suggestedFilename()).toBe('attack_enterprise-attack_19.2.zip');
+  const zip = `${SHOTS}/${dl.suggestedFilename()}`;
+  await dl.saveAs(zip);
+
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('attack-delete-19.2').click();
+  await expect(row).toHaveCount(0);
+
+  await page.getByTestId('attack-package-file').setInputFiles(zip);
+  await page.getByTestId('attack-package-upload').click();
+  await expect(page.getByText('enterprise-attack 19.2: 가져왔습니다')).toBeVisible({ timeout: 120_000 });
+  await expect(row.locator('td[title]')).toHaveAttribute('title', sha ?? '');
+  await expect(page.getByTestId('attack-version-20.1')).toContainText('활성');
+  await page.screenshot({ path: `${SHOTS}/5-package.png` });
+  // 같은 패키지는 다시 넣지 않는다
+  await page.getByTestId('attack-package-file').setInputFiles(zip);
+  await page.getByTestId('attack-package-upload').click();
+  await expect(page.getByText('enterprise-attack 19.2: 이미 가져온 파일입니다')).toBeVisible({ timeout: 60_000 });
+});
+
 test('룰·순서도에서 기법 고르기, 경보의 기법 표시', async ({ page }) => {
   await login(page, 'author', 'author123');
   // 단일룰 편집기: 저장된 기법이 이름과 함께 보이고, 찾아서 더할 수 있다 (저장하지 않는다)

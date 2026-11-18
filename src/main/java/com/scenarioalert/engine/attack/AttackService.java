@@ -6,13 +6,19 @@ import com.scenarioalert.engine.attack.AttackBundle.Rel;
 import com.scenarioalert.engine.attack.AttackDiff.Ref;
 import com.scenarioalert.engine.attack.AttackDiff.Tech;
 import com.scenarioalert.engine.common.ApiException;
+import com.scenarioalert.engine.common.AppClock;
 import com.scenarioalert.engine.common.Db;
 import com.scenarioalert.engine.common.Json;
 import com.scenarioalert.engine.common.Kst;
+import com.scenarioalert.engine.common.VersionPackage;
+import com.scenarioalert.engine.common.VersionPackage.Col;
+import com.scenarioalert.engine.common.VersionPackage.Loaded;
+import com.scenarioalert.engine.common.VersionPackage.Table;
 import com.scenarioalert.engine.config.AppProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedInputStream;
@@ -34,9 +40,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.BiConsumer;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static com.scenarioalert.engine.common.Db.p;
@@ -53,6 +61,7 @@ public class AttackService {
 
     private final Db db;
     private final Path dir;
+    private final AppClock clock = AppClock.SYSTEM;
 
     public AttackService(Db db, AppProperties props, @Value("${app.attack-dir:}") String attackDir) {
         this.db = db;
@@ -120,15 +129,9 @@ public class AttackService {
 
     private Map<String, Object> store(Bundle b, String fileName, String sha, String actor) {
         return db.tx(() -> {
-            Map<String, Object> ex = db.row("SELECT source_sha256, is_active FROM attack_versions WHERE domain=:d AND version=:v FOR UPDATE",
-                    p("d", b.domain(), "v", b.version()));
-            if (ex != null) {
-                if (sha.equals(Db.str(ex, "source_sha256"))) {
-                    return Json.obj("domain", b.domain(), "version", b.version(), "status", "already_imported",
-                            "is_active", Db.bool(ex, "is_active"));
-                }
-                throw ApiException.conflict(b.domain() + " " + b.version() + " 은 다른 파일로 이미 가져왔습니다 (sha256 다름). "
-                        + "같은 버전을 다시 넣으려면 먼저 삭제하세요");
+            Map<String, Object> done = existing(b.domain(), b.version(), sha);
+            if (done != null) {
+                return done;
             }
             db.execute("INSERT INTO attack_versions (domain, version, name, released_at, spec_version, source_file, source_sha256, "
                             + "counts, imported_by) VALUES (:d, :v, :n, :r, :s, :f, :sha, :c, :by)",
@@ -151,11 +154,7 @@ public class AttackService {
             }
             batch("INSERT INTO attack_relations (domain, version, rel_type, src_type, src_id, dst_id, description) "
                     + "VALUES (:d, :v, :rt, :st, :s, :t, :de)", rels);
-            boolean activate = db.row("SELECT 1 AS x FROM attack_versions WHERE domain=:d AND is_active", p("d", b.domain())) == null;
-            if (activate) {
-                db.execute("UPDATE attack_versions SET is_active=TRUE, activated_at=CURRENT_TIMESTAMP(3) WHERE domain=:d AND version=:v",
-                        p("d", b.domain(), "v", b.version()));
-            }
+            boolean activate = activateIfNone(b.domain(), b.version());
             db.audit(actor, "attack.import", b.domain() + " " + b.version(),
                     Json.obj("file", fileName, "sha256", sha, "counts", b.counts(), "activated", activate));
             log.info("ATT&CK imported: {} {} ({}){}", b.domain(), b.version(), b.counts(), activate ? " - activated" : "");
@@ -172,19 +171,129 @@ public class AttackService {
         }
     }
 
-    /** 서버의 ATT&CK 디렉터리(ATTACK_DIR)에 놓인 번들 파일. 폐쇄망에서는 파일을 이 디렉터리에 복사해 가져온다. */
+    // ---------------------------------------------------------------- 내보내기 패키지 (다른 서버로 옮기기)
+
+    static final List<String> PKG_KEYS = List.of("domain", "version");
+    static final Table PKG_VERSION = new Table("attack_versions", PKG_KEYS, List.of(Col.str("name"), Col.time("released_at"),
+            Col.str("spec_version"), Col.str("source_file"), Col.str("source_sha256"), Col.json("counts")), null);
+    static final List<Table> PKG_TABLES = List.of(
+            new Table("attack_objects", PKG_KEYS, List.of(Col.str("obj_type"), Col.str("attack_id"), Col.str("stix_id"), Col.str("name"),
+                    Col.str("parent_id"), Col.str("shortname"), Col.integer("ord"), Col.str("description"), Col.str("url"),
+                    Col.json("tactics"), Col.json("extra"), Col.bool("deprecated"), Col.bool("revoked"), Col.str("revoked_by"),
+                    Col.time("stix_modified")), "obj_type, attack_id"),
+            new Table("attack_relations", PKG_KEYS, List.of(Col.str("rel_type"), Col.str("src_type"), Col.str("src_id"), Col.str("dst_id"),
+                    Col.str("description")), "rel_type, src_type, src_id, dst_id"));
+    static final Map<String, Pattern> PKG_KEY_FORMAT = Map.of("domain", Pattern.compile("^[a-z][a-z0-9-]{0,31}$"),
+            "version", Pattern.compile("^\\d{1,4}(\\.\\d{1,4}){0,3}$"));
+    public static final String PKG_SUFFIX = ".zip";
+
+    /** 버전 하나를 패키지(zip)로. 원본 번들이 없어도 DB 의 내용으로 같은 버전을 다른 서버에 만든다. */
+    public byte[] exportPackage(String domain, String version, String actor) {
+        requireVersion(domain, version);
+        byte[] b = VersionPackage.export(db, "attack", p("domain", domain, "version", version), PKG_VERSION, PKG_TABLES, actor, clock.now());
+        db.audit(actor, "attack.export", domain + " " + version, Json.obj("bytes", b.length));
+        return b;
+    }
+
+    public static String packageName(String domain, String version) {
+        return "attack_" + domain + "_" + version + PKG_SUFFIX;
+    }
+
+    /**
+     * 다른 서버에서 내보낸 패키지를 가져온다. 버전 행(원본 파일 이름·sha256·발표일·건수)은 원본 그대로 두고 가져온 사람만 이 서버의 사용자로 한다.
+     * 같은 버전이 같은 원본(sha256)으로 이미 있으면 already_imported, 다른 원본이면 409 (번들 가져오기와 같다).
+     */
+    public Map<String, Object> importPackage(InputStream in, String fileName, String actor) {
+        Loaded l = VersionPackage.read(in, "attack", PKG_VERSION, PKG_TABLES, PKG_KEY_FORMAT);
+        Map<String, Object> v = l.versionRow();
+        String domain = (String) v.get("domain");
+        String version = (String) v.get("version");
+        String sha = (String) v.get("source_sha256");
+        try {
+            return db.tx(() -> {
+                Map<String, Object> done = existing(domain, version, sha);
+                if (done != null) {
+                    return done;
+                }
+                Map<String, Object> row = new LinkedHashMap<>(v);
+                row.put("imported_by", actor);
+                db.execute("INSERT INTO attack_versions (domain, version, name, released_at, spec_version, source_file, source_sha256, "
+                        + "counts, imported_by) VALUES (:domain, :version, :name, :released_at, :spec_version, :source_file, "
+                        + ":source_sha256, :counts, :imported_by)", row);
+                for (Table t : PKG_TABLES) {
+                    VersionPackage.insert(db, t, l.rows().get(t.name()));
+                }
+                boolean activate = activateIfNone(domain, version);
+                Object counts = Json.load((String) v.get("counts"));
+                Map<String, Object> detail = VersionPackage.origin(l.manifest(), fileName);
+                detail.put("sha256", sha);
+                detail.put("activated", activate);
+                db.audit(actor, "attack.import", domain + " " + version, detail);
+                log.info("ATT&CK imported from package: {} {}{}", domain, version, activate ? " - activated" : "");
+                return Json.obj("domain", domain, "version", version, "name", v.get("name"), "status", "imported",
+                        "is_active", activate, "counts", counts, "sha256", sha);
+            });
+        } catch (DataAccessException e) {
+            throw ApiException.badRequest("패키지 데이터를 넣지 못했습니다: " + e.getMostSpecificCause().getMessage());
+        }
+    }
+
+    /** 같은 원본으로 이미 있으면 그 결과, 다른 원본이면 409, 없으면 null. 트랜잭션 안에서 부른다. */
+    private Map<String, Object> existing(String domain, String version, String sha) {
+        Map<String, Object> ex = db.row("SELECT source_sha256, is_active FROM attack_versions WHERE domain=:d AND version=:v FOR UPDATE",
+                p("d", domain, "v", version));
+        if (ex == null) {
+            return null;
+        }
+        if (sha.equals(Db.str(ex, "source_sha256"))) {
+            return Json.obj("domain", domain, "version", version, "status", "already_imported", "is_active", Db.bool(ex, "is_active"));
+        }
+        throw ApiException.conflict(domain + " " + version + " 은 다른 파일로 이미 가져왔습니다 (sha256 다름). "
+                + "같은 버전을 다시 넣으려면 먼저 삭제하세요");
+    }
+
+    /** 도메인에 활성 버전이 없으면 이 버전을 활성화한다. */
+    private boolean activateIfNone(String domain, String version) {
+        boolean activate = db.row("SELECT 1 AS x FROM attack_versions WHERE domain=:d AND is_active", p("d", domain)) == null;
+        if (activate) {
+            db.execute("UPDATE attack_versions SET is_active=TRUE, activated_at=CURRENT_TIMESTAMP(3) WHERE domain=:d AND version=:v",
+                    p("d", domain, "v", version));
+        }
+        return activate;
+    }
+
+    /**
+     * 서버의 ATT&CK 디렉터리(ATTACK_DIR)에 놓인 번들 파일(*.json)과 내보내기 패키지(*.zip).
+     * 폐쇄망에서는 파일을 이 디렉터리에 복사해 가져온다.
+     */
     public List<Map<String, Object>> files() {
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         Map<String, Map<String, Object>> imported = new HashMap<>();
-        db.rows("SELECT source_file, domain, version FROM attack_versions").forEach(r -> imported.put(Db.str(r, "source_file"), r));
+        Map<String, String> shaByVersion = new HashMap<>();
+        db.rows("SELECT source_file, source_sha256, domain, version FROM attack_versions").forEach(r -> {
+            imported.put(Db.str(r, "source_file"), r);
+            shaByVersion.put(Db.str(r, "domain") + " " + Db.str(r, "version"), Db.str(r, "source_sha256"));
+        });
         try (Stream<Path> s = Files.list(dir)) {
-            return s.filter(f -> f.getFileName().toString().endsWith(".json")).sorted().map(f -> {
+            return s.filter(f -> Files.isRegularFile(f) && (f.getFileName().toString().endsWith(".json")
+                    || f.getFileName().toString().endsWith(PKG_SUFFIX))).sorted().map(f -> {
                 String n = f.getFileName().toString();
-                Map<String, Object> im = imported.get(n);
                 try {
-                    return Json.obj("file", n, "size", Files.size(f), "imported", im != null,
+                    if (n.endsWith(PKG_SUFFIX)) {
+                        Map<String, Object> m;
+                        try (InputStream in = Files.newInputStream(f)) {
+                            m = VersionPackage.peekManifest(in);
+                        }
+                        Map<String, Object> ver = m == null || !"attack".equals(m.get("kind")) ? null : Json.asMap(m.get("version"));
+                        String key = ver == null ? null : ver.get("domain") + " " + ver.get("version");
+                        boolean done = ver != null && Objects.equals(shaByVersion.get(key), ver.get("source_sha256"));
+                        return Json.obj("file", n, "size", Files.size(f), "package", true, "valid", ver != null, "imported", done,
+                                "domain", ver == null ? null : ver.get("domain"), "version", ver == null ? null : ver.get("version"));
+                    }
+                    Map<String, Object> im = imported.get(n);
+                    return Json.obj("file", n, "size", Files.size(f), "package", false, "valid", true, "imported", im != null,
                             "domain", im == null ? null : im.get("domain"), "version", im == null ? null : im.get("version"));
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
@@ -196,7 +305,7 @@ public class AttackService {
     }
 
     public Map<String, Object> importFile(String fileName, String actor, String versionOverride) {
-        if (fileName == null || !fileName.matches("^[A-Za-z0-9._\\-]{1,200}\\.json$")) {
+        if (fileName == null || !fileName.matches("^[A-Za-z0-9._\\-]{1,200}\\.(json|zip)$")) {
             throw ApiException.badRequest("파일 이름 형식이 아닙니다");
         }
         Path f = dir.resolve(fileName).normalize();
@@ -204,7 +313,7 @@ public class AttackService {
             throw ApiException.notFound("ATT&CK 파일 " + fileName);
         }
         try (InputStream in = Files.newInputStream(f)) {
-            return importStream(in, fileName, actor, versionOverride);
+            return fileName.endsWith(PKG_SUFFIX) ? importPackage(in, fileName, actor) : importStream(in, fileName, actor, versionOverride);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -214,7 +323,7 @@ public class AttackService {
     public List<Map<String, Object>> importDir(String actor) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> f : files()) {
-            if (!Boolean.TRUE.equals(f.get("imported"))) {
+            if (!Boolean.TRUE.equals(f.get("imported")) && Boolean.TRUE.equals(f.get("valid"))) {
                 try {
                     out.add(importFile((String) f.get("file"), actor, null));
                 } catch (ApiException e) {

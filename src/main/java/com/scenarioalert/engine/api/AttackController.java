@@ -5,6 +5,7 @@ import com.scenarioalert.engine.auth.AuthService.User;
 import com.scenarioalert.engine.auth.RequireRole;
 import com.scenarioalert.engine.common.ApiException;
 import com.scenarioalert.engine.common.Json;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,6 +52,27 @@ public class AttackController {
         String name = file.getOriginalFilename() == null ? "upload.json" : file.getOriginalFilename().replaceAll("[^A-Za-z0-9._\\-]", "_");
         try (InputStream in = file.getInputStream()) {
             return attack.importStream(in, name, user.username(), version);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** 다른 서버로 옮기기: 버전 하나를 패키지(zip)로 내려받는다. 받는 쪽은 /versions/import-package 로 올리거나 ATTACK_DIR 에 둔다. */
+    @GetMapping("/versions/{domain}/{version}/export")
+    @RequireRole("admin")
+    public ResponseEntity<byte[]> export(@PathVariable String domain, @PathVariable String version, User user) {
+        return Downloads.zip(attack.exportPackage(domain, version, user.username()), AttackService.packageName(domain, version));
+    }
+
+    @PostMapping("/versions/import-package")
+    @RequireRole("admin")
+    public Map<String, Object> importPackage(@RequestPart("file") MultipartFile file, User user) {
+        if (file.isEmpty()) {
+            throw ApiException.badRequest("빈 파일입니다");
+        }
+        String name = file.getOriginalFilename() == null ? "package.zip" : file.getOriginalFilename().replaceAll("[^A-Za-z0-9._\\-]", "_");
+        try (InputStream in = file.getInputStream()) {
+            return attack.importPackage(in, name, user.username());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

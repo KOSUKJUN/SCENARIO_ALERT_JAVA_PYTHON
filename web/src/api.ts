@@ -156,6 +156,38 @@ export async function upload<T>(path: string, form: FormData, query?: RequestOpt
   return data as T;
 }
 
+/** 파일 내려받기 (인증 헤더가 필요해 링크 대신 fetch → Blob). 파일 이름은 Content-Disposition, 없으면 fallback. */
+export async function download(path: string, fallback: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { headers });
+  } catch {
+    throw new ApiError(0, '서버에 연결할 수 없습니다');
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    let data: unknown = text;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      /* 본문이 JSON 이 아니다 */
+    }
+    throw parseError(res.status, data, `요청 실패 (${res.status})`);
+  }
+  const m = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') ?? '');
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = m?.[1] ?? fallback;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export const api = {
   get: <T>(path: string, query?: RequestOptions['query']) => request<T>('GET', path, undefined, { query }),
   post: <T>(path: string, body?: unknown, query?: RequestOptions['query']) =>

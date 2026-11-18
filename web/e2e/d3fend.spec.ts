@@ -41,6 +41,29 @@ test('D3FEND 버전 비교 (1.5.0 → 1.6.0) 와 대응 기법 매트릭스·상
   await expect(diff).toHaveCount(0);
 });
 
+test('D3FEND 버전 내보내기 → 삭제 → 패키지로 다시 가져오기', async ({ page }) => {
+  test.setTimeout(180_000);
+  await login(page);
+  await page.goto('/d3fend/versions');
+  const row = page.getByTestId('d3fend-version-1.5.0');
+  const sha = await row.locator('td[title]').getAttribute('title');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('d3fend-export-1.5.0').click()]);
+  expect(dl.suggestedFilename()).toBe('d3fend_1.5.0.zip');
+  const zip = `${SHOTS}/${dl.suggestedFilename()}`;
+  await dl.saveAs(zip);
+
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('d3fend-delete-1.5.0').click();
+  await expect(row).toHaveCount(0);
+
+  await page.getByTestId('d3fend-package-file').setInputFiles(zip);
+  await page.getByTestId('d3fend-package-upload').click();
+  await expect(page.getByText('D3FEND 1.5.0: 가져왔습니다')).toBeVisible({ timeout: 120_000 });
+  await expect(row.locator('td[title]')).toHaveAttribute('title', sha ?? '');
+  await expect(page.getByTestId('d3fend-version-1.6.0')).toContainText('활성');
+  await page.screenshot({ path: `${SHOTS}/package.png` });
+});
+
 test('대응방책 연계 현황과 룰·경보 노드의 지정 대응방책', async ({ page }) => {
   await login(page);
   await page.goto('/d3fend/links');

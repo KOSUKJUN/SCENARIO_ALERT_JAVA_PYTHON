@@ -2,8 +2,9 @@
 // D3FEND 버전 관리 (admin): 릴리스 올리기(온톨로지 + 매핑 CSV) / 서버 디렉터리에서 가져오기, 활성 버전과 비교(지정 대응방책 영향), 활성화, 삭제.
 // 폐쇄망 반입: 인터넷이 되는 PC 에서 scripts/fetch_d3fend 로 받은 <버전>/d3fend.json, d3fend-full-mappings.csv 를 올리거나
 // 서버의 D3FEND_DIR(기본 data/d3fend)/<버전>/ 에 복사한다.
+// 다른 서버로 옮기기: 버전마다 "내보내기" 로 패키지(zip)를 받아, 받는 서버에서 "패키지 가져오기" 로 올리거나 D3FEND_DIR 에 둔다.
 import { computed, ref } from 'vue';
-import { api, enc, upload } from '../../api';
+import { api, download, enc, upload } from '../../api';
 import { has } from '../../auth';
 import { useAsync } from '../../composables';
 import CardBox from '../../components/CardBox.vue';
@@ -15,7 +16,10 @@ import StatusBadge from '../../components/StatusBadge.vue';
 import type { D3fendDiffResult, D3fendVersion } from '../../types';
 import { fmtTime } from '../../util';
 
-interface DirEntry { name: string; ontology: number | null; mappings: number | null; complete: boolean; imported: boolean; version: string | null }
+interface DirEntry {
+  name: string; package: boolean; size: number | null; ontology: number | null; mappings: number | null;
+  complete: boolean; imported: boolean; version: string | null;
+}
 interface ImportResult { version: string; status: string; is_active: boolean }
 
 const admin = computed(() => has('admin'));
@@ -27,6 +31,8 @@ const busy = ref(false);
 const ontology = ref<File | null>(null);
 const mappings = ref<File | null>(null);
 const verOverride = ref('');
+const pkg = ref<File | null>(null);
+const pkgKey = ref(0); // 올린 뒤 파일 입력을 비운다 (같은 파일을 다시 고를 수 있게)
 const diff = ref<D3fendDiffResult | null>(null);
 const diffTarget = ref<D3fendVersion | null>(null);
 const DIFF_KEYS: [keyof D3fendDiffResult, string][] = [['added', '추가'], ['removed', '없어짐'], ['renamed', '이름 변경'], ['moved', '전술·상위 변경']];
@@ -59,6 +65,21 @@ const doUpload = () =>
     mappings.value = null;
     return summaryText(r);
   }, '가져왔습니다');
+const doUploadPackage = () =>
+  act(async () => {
+    if (!pkg.value) throw new Error('패키지 파일을 고르세요');
+    const fd = new FormData();
+    fd.append('file', pkg.value);
+    const r = await upload<ImportResult>('/d3fend/versions/import-package', fd);
+    pkg.value = null;
+    pkgKey.value++;
+    return summaryText(r);
+  }, '가져왔습니다');
+const exportVersion = (v: D3fendVersion) =>
+  act(async () => {
+    await download(`/d3fend/versions/${enc(v.version)}/export`, `d3fend_${v.version}.zip`);
+    return `D3FEND ${v.version} 패키지를 내려받았습니다. 다른 서버의 D3FEND 대응 > 버전 관리에서 올리거나 D3FEND_DIR 에 두세요`;
+  }, '내려받았습니다');
 const importDir = (name: string) => act(async () => summaryText(await api.post<ImportResult>('/d3fend/files/import', { name })), '가져왔습니다');
 async function openDiff(v: D3fendVersion) {
   err.value = null;
@@ -106,6 +127,8 @@ const mb = (n: number | null) => (n == null ? '없음' : `${(n / 1024 / 1024).to
             <td class="small">{{ v.imported_by }} {{ fmtTime(v.imported_at) }}</td>
             <td class="small" :title="v.source_sha256">{{ v.source_files.source }}<br /><span class="mono muted">{{ v.source_sha256.slice(0, 12) }}…</span></td>
             <td class="nowrap">
+              <button v-if="admin" class="small" :disabled="busy" :data-testid="`d3fend-export-${v.version}`"
+                title="다른 서버로 옮길 패키지(zip) 내려받기" @click="exportVersion(v)">내보내기</button>
               <button v-if="!v.is_active" class="small" :disabled="busy" :data-testid="`d3fend-diff-${v.version}`" @click="openDiff(v)">비교·활성화</button>
               <button v-if="admin && !v.is_active" class="small danger" :disabled="busy" :data-testid="`d3fend-delete-${v.version}`" @click="remove(v)">삭제</button>
             </td>
@@ -132,18 +155,30 @@ const mb = (n: number | null) => (n == null ? '없음' : `${(n / 1024 / 1024).to
           <input v-model="verOverride" placeholder="버전 (온톨로지에 없을 때만)" style="width: 200px" />
           <button class="primary" :disabled="busy || !ontology || !mappings" data-testid="d3fend-upload" @click="doUpload">가져오기</button>
         </div>
-        <p v-if="busy" class="muted small">가져오는 중… (매핑 CSV 는 십여 MB 라 수십 초 걸릴 수 있습니다)</p>
+        <h4>다른 서버에서 내보낸 패키지</h4>
+        <p class="muted small">
+          다른 서버의 버전 목록에서 "내보내기" 로 받은 <span class="mono">d3fend_&lt;버전&gt;.zip</span>.
+          원본 두 파일의 sha256 이 그대로 들어 있어, 같은 원본으로 이미 가져온 버전은 다시 넣지 않습니다.
+        </p>
+        <div class="form-row">
+          <input :key="pkgKey" type="file" accept=".zip,application/zip" data-testid="d3fend-package-file" @change="pkg = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+          <button class="primary" :disabled="busy || !pkg" data-testid="d3fend-package-upload" @click="doUploadPackage">패키지 가져오기</button>
+        </div>
+        <p v-if="busy" class="muted small">처리 중… (매핑 CSV 는 십여 MB 라 수십 초 걸릴 수 있습니다)</p>
       </CardBox>
       <CardBox title="서버 디렉터리의 릴리스">
-        <p class="muted small">서버의 <span class="mono">{{ files.data.value?.dir }}</span>/&lt;버전&gt;/ 에 복사한 두 파일. init 때 새 버전을 자동으로 가져옵니다.</p>
+        <p class="muted small">
+          서버의 <span class="mono">{{ files.data.value?.dir }}</span>/&lt;버전&gt;/ 에 복사한 두 파일, 또는 그 디렉터리에 둔 내보내기 패키지(.zip).
+          init 때 새 버전을 자동으로 가져옵니다.
+        </p>
         <table class="table">
           <tbody>
             <tr v-for="f in files.data.value?.files ?? []" :key="f.name">
-              <td class="mono small">{{ f.name }}/</td>
-              <td class="small">온톨로지 {{ mb(f.ontology) }} · 매핑 {{ mb(f.mappings) }}</td>
+              <td class="mono small">{{ f.package ? f.name : `${f.name}/` }} <span v-if="f.package" class="chip">패키지</span></td>
+              <td class="small">{{ f.package ? mb(f.size) : `온톨로지 ${mb(f.ontology)} · 매핑 ${mb(f.mappings)}` }}</td>
               <td>
                 <span v-if="f.imported" class="muted small">가져옴 ({{ f.version }})</span>
-                <span v-else-if="!f.complete" class="warn-text small">파일 부족</span>
+                <span v-else-if="!f.complete" class="warn-text small">{{ f.package ? 'D3FEND 패키지 아님' : '파일 부족' }}</span>
                 <button v-else class="small" :disabled="busy" :data-testid="`d3fend-import-${f.name}`" @click="importDir(f.name)">가져오기</button>
               </td>
             </tr>

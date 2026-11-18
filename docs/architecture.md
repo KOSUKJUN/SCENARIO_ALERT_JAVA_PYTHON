@@ -129,6 +129,7 @@ MITRE 공식 STIX 2.1 번들(mitre-attack/attack-stix-data 의 `enterprise-attac
 | 저장 | `attack_versions`(도메인·버전·파일 sha256·활성 여부), `attack_objects`(전술 TA, 기법·하위 기법 T, 완화 M, 그룹 G, 소프트웨어 S, 탐지 전략 DET), `attack_relations`(기법을 향한 mitigates·detects·uses). Flyway V3 |
 | 반입 | 인터넷 PC 에서 `scripts\fetch_attack.ps1 -Version 20.1` → 파일을 서버 `ATTACK_DIR`(기본 `data/attack`, compose 가 `/app/data/attack` 로 연결)에 복사하면 `init` 이 가져온다. 또는 화면 ATT&CK > 버전 관리에서 올린다 (admin) |
 | 버전 | 도메인마다 활성 버전은 하나. 같은 파일은 다시 넣지 않고(sha256), 같은 버전의 다른 파일은 거부한다. 처음 가져온 도메인은 바로 활성, init 은 가장 높은 버전을 활성화한다. 활성 버전은 지울 수 없다 |
+| 옮기기 | 버전 목록의 "내보내기"(`GET /api/v1/attack/versions/{domain}/{version}/export`, admin)로 패키지 `attack_<도메인>_<버전>.zip` 을 받아, 다른 서버에서 "패키지 가져오기"(`POST /api/v1/attack/versions/import-package`)로 올리거나 `ATTACK_DIR` 에 두면 init 이 가져온다. 패키지 = `manifest.json`(형식·버전 행·테이블별 행 수와 sha256) + 테이블별 JSONL. 원본 번들의 파일 이름·sha256 을 그대로 옮기므로 같은 원본을 다시 넣어도 "이미 가져옴" 이다. 변조(sha256 불일치)·모르는 파일·다른 종류의 패키지는 거부한다. 공통 형식은 `common/VersionPackage` |
 | 비교 | 활성화 전에 활성 버전과 비교: 추가·없어짐·폐기(대체 기법)·사용 중단·이름·전술 변경과, **현재 룰·순서도가 참조하는 기법 중 영향받는 것** |
 | 룰·순서도 | 단일룰 정의의 `attack: [T1190]`, 순서도 경보 노드의 `attack`. 형식은 검증기가, 존재 여부는 저장 때 활성 버전으로 검사 (없거나 폐기면 오류, 사용 중단이면 경고, 데이터가 없으면 경고만) |
 | 경보 | 기법 = 고른 경보 노드의 attack + **경로에서 실제로 성립한 룰**의 attack + 같은 평가에서 함께 성립한 경보 노드의 attack. 억제 시간 안에 같은 대상의 다음 단계가 보이면 등급이 같아도 기법을 누적하고 다시 전달한다(전달 중 기법이 바뀌면 그 전달 결과로 덮어쓰지 않는다). 만들 때(등급 상향 때) 활성 버전의 이름·전술과 버전을 `alerts.attack`, `alerts.attack_version` 에 함께 저장한다(나중에 버전이 바뀌어도 경보 내용은 그대로). 사고처리 시스템 전달 내용에도 들어간다 |
@@ -150,6 +151,7 @@ D3FEND 가 추론한 ATT&CK 매핑 `d3fend-full-mappings.csv`(ATT&CK 기법 ↔ 
 | 읽기 | 방어 기법 = `d3fend-id` 가 `D3-` 인 노드. 상위 = subClassOf 의 다른 방어 기법, 전술 = 자신이나 조상의 `d3f:enables`. 전술에 닿지 않는 노드(분석 모델 D3-ARMA 등, 분석 기법 D3A-)는 대응방책이 아니라 뺀다. 매핑 CSV 는 `query_def_tech_label`(이름)로 온톨로지와 잇고 SPARTA 행은 버린다 |
 | 반입 | 인터넷 PC 에서 `scripts\fetch_d3fend.ps1 -Version 1.6.0` → `data/d3fend/<버전>/` 폴더째 서버 `D3FEND_DIR`(기본 `data/d3fend`)에 복사하면 `init` 이 가져온다(ATT&CK 다음, 기본 룰 앞). 또는 화면 D3FEND 대응 > 버전 관리에서 두 파일을 올린다 (admin) |
 | 버전 | 활성 버전 하나. 같은 파일 쌍은 다시 넣지 않고, 같은 버전의 다른 파일은 거부. 활성 버전은 지울 수 없다. 비교: 기법 추가·없어짐·이름·전술/상위 변경, 정의 갱신, 매핑 증감, **지정 대응방책 중 없어지는 기법** |
+| 옮기기 | ATT&CK 과 같다: "내보내기"(`GET /api/v1/d3fend/versions/{version}/export`) → `d3fend_<버전>.zip` (`d3fend_tactics`·`d3fend_techniques`·`d3fend_attack_map`·`d3fend_mitigation_map` JSONL), 받는 서버에서 "패키지 가져오기"(`POST /api/v1/d3fend/versions/import-package`) 또는 `D3FEND_DIR` 에 zip 그대로 둔다. 원본 두 파일의 sha256 을 유지한다 |
 | 지정 대응방책 | 단일룰 정의의 `d3fend: [D3-NI, D3-PT]`, 순서도 경보 노드의 `d3fend`. 형식은 검증기가, 존재 여부는 저장 때 활성 버전으로 검사(없으면 오류, 데이터가 없으면 경고). 편집 화면에서 ATT&CK 기법 기준 사고 대응 기법을 추천한다 |
 | 경보 | 지정 대응방책 = ATT&CK 과 같은 범위(고른·함께 성립한 경보 노드 + 경로에서 성립한 룰). 생성·상향 때 이름·전술·버전을 스냅샷으로 저장하고, 억제 시간 안에 다음 단계가 보이면 누적해 다시 전달한다. 사고처리 시스템 전달 내용에 `d3fend`, `d3fend_version` 이 들어간다 |
 | 권고 대응방책 | `POST /api/v1/d3fend/countermeasures {attack, d3fend}`: 활성 버전의 매핑으로 계산(경보에 저장하지 않는다). 전술 순서 격리 → 퇴출 → 복구(사고 대응) → 탐지 → 강화 → 기만 → 모델링, 전술 안에서는 지정 → ATT&CK 완화(M)와 연결된 권고 → 더 많은 기법에 대응. 하위 기법(T1059.004)에 매핑이 없으면 상위(T1059)를 쓴다 |

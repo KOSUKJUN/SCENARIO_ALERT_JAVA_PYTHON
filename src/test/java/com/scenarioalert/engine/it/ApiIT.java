@@ -496,4 +496,170 @@ class ApiIT {
         assertEquals(false, gv.map().get("ok"));
         assertTrue(String.valueOf(gv.map().get("errors")).contains("D3-ZZZ"), String.valueOf(gv.map().get("errors")));
     }
+
+    // ------------------------------------------------------------------ ATT&CK·D3FEND 버전 내보내기 패키지
+    record Bin(int status, byte[] body, String disposition) {
+    }
+
+    Bin download(String path, String token) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1" + path))
+                .header("Authorization", "Bearer " + token).GET().build();
+        HttpResponse<byte[]> r = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        return new Bin(r.statusCode(), r.body(), r.headers().firstValue("Content-Disposition").orElse(""));
+    }
+
+    Res uploadPackage(String path, String token, byte[] data, String name) throws Exception {
+        String boundary = "----pkg" + System.nanoTime();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name
+                + "\"\r\nContent-Type: application/zip\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(data);
+        out.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1" + path))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary).header("Authorization", "Bearer " + token)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray())).build();
+        HttpResponse<String> r = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return new Res(r.statusCode(), r.body().isEmpty() ? null : Json.load(r.body()));
+    }
+
+    static Map<String, byte[]> unzip(byte[] zip) throws Exception {
+        Map<String, byte[]> m = new java.util.LinkedHashMap<>();
+        try (java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zip))) {
+            for (java.util.zip.ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                m.put(e.getName(), z.readAllBytes());
+            }
+        }
+        return m;
+    }
+
+    static byte[] rezip(Map<String, byte[]> entries) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(out)) {
+            for (Map.Entry<String, byte[]> e : entries.entrySet()) {
+                z.putNextEntry(new java.util.zip.ZipEntry(e.getKey()));
+                z.write(e.getValue());
+                z.closeEntry();
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /** 패키지 안 데이터 파일(manifest 제외)만: 다시 내보낸 내용이 처음과 같은지 비교한다. */
+    static Map<String, String> dataFiles(byte[] zip) throws Exception {
+        Map<String, String> m = new java.util.TreeMap<>();
+        unzip(zip).forEach((k, v) -> {
+            if (!"manifest.json".equals(k)) {
+                m.put(k, new String(v, StandardCharsets.UTF_8));
+            }
+        });
+        return m;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void attackExportPackageRoundTrip() throws Exception {
+        String admin = login("admin", "admin123");
+        String viewer = login("viewer", "viewer123");
+        assertEquals(403, download("/attack/versions/enterprise-attack/19.2/export", viewer).status());
+        assertEquals(404, download("/attack/versions/enterprise-attack/9.9/export", admin).status());
+        Bin ex = download("/attack/versions/enterprise-attack/19.2/export", admin);
+        assertEquals(200, ex.status(), new String(ex.body(), StandardCharsets.UTF_8));
+        assertTrue(ex.disposition().contains("attack_enterprise-attack_19.2.zip"), ex.disposition());
+        Map<String, byte[]> files = unzip(ex.body());
+        assertEquals(Set.of("manifest.json", "attack_objects.jsonl", "attack_relations.jsonl"), files.keySet());
+        Map<String, Object> manifest = Json.loadMap(new String(files.get("manifest.json"), StandardCharsets.UTF_8));
+        assertEquals("attack", manifest.get("kind"));
+        Map<String, Object> mv = (Map<String, Object>) manifest.get("version");
+        Map<String, Object> before = db.row("SELECT source_sha256, source_file, counts FROM attack_versions "
+                + "WHERE domain='enterprise-attack' AND version='19.2'", Map.of());
+        assertEquals(before.get("source_sha256"), mv.get("source_sha256"));
+        long objs = db.rows("SELECT 1 FROM attack_objects WHERE domain='enterprise-attack' AND version='19.2'").size();
+        long rels = db.rows("SELECT 1 FROM attack_relations WHERE domain='enterprise-attack' AND version='19.2'").size();
+        assertEquals(objs, ((Number) ((Map<String, Object>) ((Map<String, Object>) manifest.get("tables")).get("attack_objects")).get("rows")).longValue());
+
+        // 이 서버에서 지우고 패키지로 다시 가져오면 원본 sha256·건수·행이 그대로다 (다른 서버로 옮긴 것과 같다)
+        assertEquals(200, call("DELETE", "/attack/versions/enterprise-attack/19.2", admin, null).status());
+        assertEquals(403, uploadPackage("/attack/versions/import-package", viewer, ex.body(), "p.zip").status());
+        Res im = uploadPackage("/attack/versions/import-package", admin, ex.body(), "attack_enterprise-attack_19.2.zip");
+        assertEquals(200, im.status(), String.valueOf(im.body()));
+        assertEquals("imported", im.map().get("status"));
+        assertEquals("19.2", im.map().get("version"));
+        assertEquals(false, im.map().get("is_active"));
+        Map<String, Object> after = db.row("SELECT source_sha256, source_file, counts, imported_by FROM attack_versions "
+                + "WHERE domain='enterprise-attack' AND version='19.2'", Map.of());
+        assertEquals(before.get("source_sha256"), after.get("source_sha256"));
+        assertEquals(before.get("source_file"), after.get("source_file"));
+        assertEquals(Json.load(String.valueOf(before.get("counts"))), Json.load(String.valueOf(after.get("counts"))));
+        assertEquals("admin", after.get("imported_by"));
+        assertEquals(objs, db.rows("SELECT 1 FROM attack_objects WHERE domain='enterprise-attack' AND version='19.2'").size());
+        assertEquals(rels, db.rows("SELECT 1 FROM attack_relations WHERE domain='enterprise-attack' AND version='19.2'").size());
+        assertEquals(dataFiles(ex.body()), dataFiles(download("/attack/versions/enterprise-attack/19.2/export", admin).body()));
+        Res t = call("GET", "/attack/techniques/T1190?domain=enterprise-attack&version=19.2", viewer, null);
+        assertEquals(200, t.status(), String.valueOf(t.body()));
+        assertFalse(((List<Object>) t.map().get("mitigations")).isEmpty());
+
+        // 같은 패키지·같은 원본 번들은 다시 넣지 않는다
+        assertEquals("already_imported", uploadPackage("/attack/versions/import-package", admin, ex.body(), "p.zip").map().get("status"));
+        byte[] mini = Files.readAllBytes(ItSupport.ATTACK_FIXTURES.resolve("enterprise-attack-mini-19.2.json"));
+        assertEquals("already_imported", upload(admin, mini, "enterprise-attack-mini-19.2.json").map().get("status"));
+
+        // 손상·변조·다른 종류·zip 아님은 거부 (아무것도 넣지 않는다)
+        Map<String, byte[]> bad = new java.util.LinkedHashMap<>(files);
+        bad.put("attack_relations.jsonl", (new String(files.get("attack_relations.jsonl"), StandardCharsets.UTF_8) + "{}\n")
+                .getBytes(StandardCharsets.UTF_8));
+        Res tampered = uploadPackage("/attack/versions/import-package", admin, rezip(bad), "p.zip");
+        assertEquals(400, tampered.status());
+        assertTrue(String.valueOf(tampered.body()).contains("sha256"), String.valueOf(tampered.body()));
+        Map<String, byte[]> extra = new java.util.LinkedHashMap<>(files);
+        extra.put("evil.py", new byte[]{1});
+        assertEquals(400, uploadPackage("/attack/versions/import-package", admin, rezip(extra), "p.zip").status());
+        byte[] d3 = download("/d3fend/versions/1.6.0/export", admin).body();
+        assertEquals(400, uploadPackage("/attack/versions/import-package", admin, d3, "d.zip").status());
+        assertEquals(400, uploadPackage("/attack/versions/import-package", admin, mini, "x.zip").status());
+        assertEquals(2, db.rows("SELECT 1 FROM attack_versions WHERE domain='enterprise-attack'").size());
+        assertEquals(Map.of("enterprise-attack", "20.1"), call("GET", "/attack/versions", viewer, null).map().get("active"));
+        assertFalse(db.rows("SELECT 1 FROM audit_log WHERE action='attack.export'").isEmpty());
+    }
+
+    @Test
+    void d3fendExportPackageRoundTrip() throws Exception {
+        String admin = login("admin", "admin123");
+        String viewer = login("viewer", "viewer123");
+        assertEquals(403, download("/d3fend/versions/1.5.0/export", viewer).status());
+        Bin ex = download("/d3fend/versions/1.5.0/export", admin);
+        assertEquals(200, ex.status(), new String(ex.body(), StandardCharsets.UTF_8));
+        assertTrue(ex.disposition().contains("d3fend_1.5.0.zip"), ex.disposition());
+        assertEquals(Set.of("manifest.json", "d3fend_tactics.jsonl", "d3fend_techniques.jsonl", "d3fend_attack_map.jsonl",
+                "d3fend_mitigation_map.jsonl"), unzip(ex.body()).keySet());
+        Map<String, Object> before = db.row("SELECT source_sha256, source_files, counts FROM d3fend_versions WHERE version='1.5.0'", Map.of());
+        Map<String, Long> n = new java.util.TreeMap<>();
+        for (String tb : List.of("d3fend_tactics", "d3fend_techniques", "d3fend_attack_map", "d3fend_mitigation_map")) {
+            n.put(tb, (long) db.rows("SELECT 1 FROM " + tb + " WHERE version='1.5.0'").size());
+        }
+
+        assertEquals(200, call("DELETE", "/d3fend/versions/1.5.0", admin, null).status());
+        Res im = uploadPackage("/d3fend/versions/import-package", admin, ex.body(), "d3fend_1.5.0.zip");
+        assertEquals(200, im.status(), String.valueOf(im.body()));
+        assertEquals("imported", im.map().get("status"));
+        assertEquals(false, im.map().get("is_active"));
+        Map<String, Object> after = db.row("SELECT source_sha256, source_files, counts FROM d3fend_versions WHERE version='1.5.0'", Map.of());
+        assertEquals(before.get("source_sha256"), after.get("source_sha256"));
+        assertEquals(Json.load(String.valueOf(before.get("source_files"))), Json.load(String.valueOf(after.get("source_files"))));
+        for (Map.Entry<String, Long> e : n.entrySet()) {
+            assertEquals(e.getValue(), (long) db.rows("SELECT 1 FROM " + e.getKey() + " WHERE version='1.5.0'").size(), e.getKey());
+        }
+        assertEquals(dataFiles(ex.body()), dataFiles(download("/d3fend/versions/1.5.0/export", admin).body()));
+        Res t = call("GET", "/d3fend/techniques/D3-PT?version=1.5.0", viewer, null);
+        assertEquals(200, t.status(), String.valueOf(t.body()));
+        assertEquals("Process Termination", t.map().get("name"));
+
+        assertEquals("already_imported", uploadPackage("/d3fend/versions/import-package", admin, ex.body(), "p.zip").map().get("status"));
+        byte[] ont = Files.readAllBytes(ItSupport.D3FEND_FIXTURES.resolve("1.5.0/d3fend.json"));
+        byte[] map = Files.readAllBytes(ItSupport.D3FEND_FIXTURES.resolve("1.5.0/d3fend-full-mappings.csv"));
+        assertEquals("already_imported", uploadD3fend(admin, ont, map).map().get("status"));
+        byte[] atk = download("/attack/versions/enterprise-attack/20.1/export", admin).body();
+        assertEquals(400, uploadPackage("/d3fend/versions/import-package", admin, atk, "a.zip").status());
+        assertEquals(2, db.rows("SELECT 1 FROM d3fend_versions").size());
+        assertEquals("1.6.0", call("GET", "/d3fend/versions", viewer, null).map().get("active"));
+    }
 }

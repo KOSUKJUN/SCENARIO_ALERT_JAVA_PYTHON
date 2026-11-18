@@ -2,9 +2,14 @@ package com.scenarioalert.engine.d3fend;
 
 import com.scenarioalert.engine.attack.AttackService;
 import com.scenarioalert.engine.common.ApiException;
+import com.scenarioalert.engine.common.AppClock;
 import com.scenarioalert.engine.common.Db;
 import com.scenarioalert.engine.common.Json;
 import com.scenarioalert.engine.common.Kst;
+import com.scenarioalert.engine.common.VersionPackage;
+import com.scenarioalert.engine.common.VersionPackage.Col;
+import com.scenarioalert.engine.common.VersionPackage.Loaded;
+import com.scenarioalert.engine.common.VersionPackage.Table;
 import com.scenarioalert.engine.config.AppProperties;
 import com.scenarioalert.engine.d3fend.D3fendBundle.Bundle;
 import com.scenarioalert.engine.d3fend.D3fendBundle.Mapping;
@@ -15,6 +20,7 @@ import com.scenarioalert.engine.d3fend.D3fendBundle.Technique;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedInputStream;
@@ -43,6 +49,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.BiConsumer;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static com.scenarioalert.engine.common.Db.p;
@@ -70,6 +77,7 @@ public class D3fendService {
 
     private final Db db;
     private final Path dir;
+    private final AppClock clock = AppClock.SYSTEM;
 
     public D3fendService(Db db, AppProperties props, @Value("${app.d3fend-dir:}") String d3fendDir) {
         this.db = db;
@@ -156,12 +164,9 @@ public class D3fendService {
     private Map<String, Object> store(Bundle b, String source, List<Map<String, Object>> files, String sha, String actor) {
         String ver = b.version();
         return db.tx(() -> {
-            Map<String, Object> ex = db.row("SELECT source_sha256, is_active FROM d3fend_versions WHERE version=:v FOR UPDATE", p("v", ver));
-            if (ex != null) {
-                if (sha.equals(Db.str(ex, "source_sha256"))) {
-                    return Json.obj("version", ver, "status", "already_imported", "is_active", Db.bool(ex, "is_active"));
-                }
-                throw ApiException.conflict("D3FEND " + ver + " 은 다른 파일로 이미 가져왔습니다 (sha256 다름). 같은 버전을 다시 넣으려면 먼저 삭제하세요");
+            Map<String, Object> done = existing(ver, sha);
+            if (done != null) {
+                return done;
             }
             Ontology o = b.ontology();
             db.execute("INSERT INTO d3fend_versions (version, released_at, source_files, source_sha256, counts, imported_by) "
@@ -192,10 +197,7 @@ public class D3fendService {
                 rows.add(p("v", ver, "m", m.mitigationId(), "n", m.mitigationName(), "d", m.d3fId()));
             }
             batch("INSERT INTO d3fend_mitigation_map (version, mitigation_id, mitigation_name, d3f_id) VALUES (:v, :m, :n, :d)", rows);
-            boolean activate = db.row("SELECT 1 AS x FROM d3fend_versions WHERE is_active", Map.of()) == null;
-            if (activate) {
-                db.execute("UPDATE d3fend_versions SET is_active=TRUE, activated_at=CURRENT_TIMESTAMP(3) WHERE version=:v", p("v", ver));
-            }
+            boolean activate = activateIfNone(ver);
             db.audit(actor, "d3fend.import", ver, Json.obj("source", source, "files", files, "counts", b.counts(),
                     "skipped_rows", b.skippedMappingRows(), "activated", activate));
             log.info("D3FEND imported: {} ({}){}", ver, b.counts(), activate ? " - activated" : "");
@@ -211,29 +213,127 @@ public class D3fendService {
         }
     }
 
+    /** 같은 원본으로 이미 있으면 그 결과, 다른 원본이면 409, 없으면 null. 트랜잭션 안에서 부른다. */
+    private Map<String, Object> existing(String ver, String sha) {
+        Map<String, Object> ex = db.row("SELECT source_sha256, is_active FROM d3fend_versions WHERE version=:v FOR UPDATE", p("v", ver));
+        if (ex == null) {
+            return null;
+        }
+        if (sha.equals(Db.str(ex, "source_sha256"))) {
+            return Json.obj("version", ver, "status", "already_imported", "is_active", Db.bool(ex, "is_active"));
+        }
+        throw ApiException.conflict("D3FEND " + ver + " 은 다른 파일로 이미 가져왔습니다 (sha256 다름). 같은 버전을 다시 넣으려면 먼저 삭제하세요");
+    }
+
+    private boolean activateIfNone(String ver) {
+        boolean activate = db.row("SELECT 1 AS x FROM d3fend_versions WHERE is_active", Map.of()) == null;
+        if (activate) {
+            db.execute("UPDATE d3fend_versions SET is_active=TRUE, activated_at=CURRENT_TIMESTAMP(3) WHERE version=:v", p("v", ver));
+        }
+        return activate;
+    }
+
+    // ---------------------------------------------------------------- 내보내기 패키지 (다른 서버로 옮기기)
+
+    static final List<String> PKG_KEYS = List.of("version");
+    static final Table PKG_VERSION = new Table("d3fend_versions", PKG_KEYS, List.of(Col.time("released_at"), Col.json("source_files"),
+            Col.str("source_sha256"), Col.json("counts")), null);
+    static final List<Table> PKG_TABLES = List.of(
+            new Table("d3fend_tactics", PKG_KEYS, List.of(Col.str("tactic"), Col.integer("ord"), Col.str("definition")), "ord, tactic"),
+            new Table("d3fend_techniques", PKG_KEYS, List.of(Col.str("d3f_id"), Col.str("iri"), Col.str("name"), Col.str("tactic"),
+                    Col.str("parent_id"), Col.integer("depth"), Col.str("definition"), Col.str("kb_article"), Col.json("synonyms")), "d3f_id"),
+            new Table("d3fend_attack_map", PKG_KEYS, List.of(Col.str("attack_id"), Col.str("d3f_id"), Col.str("attack_domain"),
+                    Col.str("attack_name"), Col.json("via")), "attack_id, d3f_id"),
+            new Table("d3fend_mitigation_map", PKG_KEYS, List.of(Col.str("mitigation_id"), Col.str("mitigation_name"), Col.str("d3f_id")),
+                    "mitigation_id, d3f_id"));
+    static final Map<String, Pattern> PKG_KEY_FORMAT = Map.of("version", Pattern.compile("^[0-9][0-9A-Za-z.\\-]{0,31}$"));
+    public static final String PKG_SUFFIX = ".zip";
+
+    /** 버전 하나를 패키지(zip)로. 원본 두 파일이 없어도 DB 의 내용으로 같은 버전을 다른 서버에 만든다. */
+    public byte[] exportPackage(String version, String actor) {
+        requireVersion(version);
+        byte[] b = VersionPackage.export(db, "d3fend", p("version", version), PKG_VERSION, PKG_TABLES, actor, clock.now());
+        db.audit(actor, "d3fend.export", version, Json.obj("bytes", b.length));
+        return b;
+    }
+
+    public static String packageName(String version) {
+        return "d3fend_" + version + PKG_SUFFIX;
+    }
+
     /**
-     * 서버의 D3FEND 디렉터리(D3FEND_DIR)에 놓인 릴리스. 버전마다 하위 디렉터리 하나에 d3fend.json 과 d3fend-full-mappings.csv 를 둔다
-     * (예: data/d3fend/1.6.0/). 폐쇄망에서는 이 디렉터리에 복사해 가져온다.
+     * 다른 서버에서 내보낸 패키지를 가져온다. 버전 행(원본 두 파일의 이름·sha256, 발표일, 건수)은 원본 그대로 두고 가져온 사람만 바꾼다.
+     * 같은 원본이면 already_imported, 같은 버전의 다른 원본이면 409.
+     */
+    public Map<String, Object> importPackage(InputStream in, String fileName, String actor) {
+        Loaded l = VersionPackage.read(in, "d3fend", PKG_VERSION, PKG_TABLES, PKG_KEY_FORMAT);
+        Map<String, Object> v = l.versionRow();
+        String ver = (String) v.get("version");
+        String sha = (String) v.get("source_sha256");
+        try {
+            return db.tx(() -> {
+                Map<String, Object> done = existing(ver, sha);
+                if (done != null) {
+                    return done;
+                }
+                Map<String, Object> row = new LinkedHashMap<>(v);
+                row.put("imported_by", actor);
+                db.execute("INSERT INTO d3fend_versions (version, released_at, source_files, source_sha256, counts, imported_by) "
+                        + "VALUES (:version, :released_at, :source_files, :source_sha256, :counts, :imported_by)", row);
+                for (Table t : PKG_TABLES) {
+                    VersionPackage.insert(db, t, l.rows().get(t.name()));
+                }
+                boolean activate = activateIfNone(ver);
+                Map<String, Object> detail = VersionPackage.origin(l.manifest(), fileName);
+                detail.put("sha256", sha);
+                detail.put("activated", activate);
+                db.audit(actor, "d3fend.import", ver, detail);
+                log.info("D3FEND imported from package: {}{}", ver, activate ? " - activated" : "");
+                return Json.obj("version", ver, "status", "imported", "is_active", activate,
+                        "counts", Json.load((String) v.get("counts")), "sha256", sha);
+            });
+        } catch (DataAccessException e) {
+            throw ApiException.badRequest("패키지 데이터를 넣지 못했습니다: " + e.getMostSpecificCause().getMessage());
+        }
+    }
+
+    /**
+     * 서버의 D3FEND 디렉터리(D3FEND_DIR)에 놓인 릴리스와 내보내기 패키지. 릴리스는 버전마다 하위 디렉터리 하나에 d3fend.json 과
+     * d3fend-full-mappings.csv 를 두고 (예: data/d3fend/1.6.0/), 패키지는 zip 파일 그대로 둔다 (예: data/d3fend/d3fend_1.6.0.zip).
+     * 폐쇄망에서는 이 디렉터리에 복사해 가져온다.
      */
     public List<Map<String, Object>> files() {
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         Map<String, Map<String, Object>> imported = new HashMap<>();
-        db.rows("SELECT version, source_files FROM d3fend_versions").forEach(r -> {
+        Map<String, String> shaByVersion = new HashMap<>();
+        db.rows("SELECT version, source_files, source_sha256 FROM d3fend_versions").forEach(r -> {
+            shaByVersion.put(Db.str(r, "version"), Db.str(r, "source_sha256"));
             Object src = Json.loadMap(Db.str(r, "source_files")).get("source");
             if (src != null) {
                 imported.put(String.valueOf(src), r);
             }
         });
         try (Stream<Path> s = Files.list(dir)) {
-            return s.filter(Files::isDirectory).sorted().map(d -> {
+            return s.filter(f -> Files.isDirectory(f) || f.getFileName().toString().endsWith(PKG_SUFFIX)).sorted().map(d -> {
                 String n = d.getFileName().toString();
-                Path o = d.resolve(ONTOLOGY_FILE);
-                Path m = d.resolve(MAPPINGS_FILE);
-                Map<String, Object> im = imported.get(n);
                 try {
-                    return Json.obj("name", n, "ontology", Files.isRegularFile(o) ? Files.size(o) : null,
+                    if (!Files.isDirectory(d)) {
+                        Map<String, Object> m;
+                        try (InputStream in = Files.newInputStream(d)) {
+                            m = VersionPackage.peekManifest(in);
+                        }
+                        Map<String, Object> ver = m == null || !"d3fend".equals(m.get("kind")) ? null : Json.asMap(m.get("version"));
+                        Object v = ver == null ? null : ver.get("version");
+                        return Json.obj("name", n, "package", true, "size", Files.size(d), "ontology", null, "mappings", null,
+                                "complete", ver != null, "imported", v != null && Objects.equals(shaByVersion.get(String.valueOf(v)),
+                                        ver.get("source_sha256")), "version", v);
+                    }
+                    Path o = d.resolve(ONTOLOGY_FILE);
+                    Path m = d.resolve(MAPPINGS_FILE);
+                    Map<String, Object> im = imported.get(n);
+                    return Json.obj("name", n, "package", false, "size", null, "ontology", Files.isRegularFile(o) ? Files.size(o) : null,
                             "mappings", Files.isRegularFile(m) ? Files.size(m) : null, "complete", Files.isRegularFile(o) && Files.isRegularFile(m),
                             "imported", im != null, "version", im == null ? null : im.get("version"));
                 } catch (IOException e) {
@@ -248,6 +348,17 @@ public class D3fendService {
     public Map<String, Object> importDirEntry(String name, String actor, String versionOverride) {
         if (name == null || !name.matches("^[A-Za-z0-9._\\-]{1,64}$") || name.startsWith(".")) {
             throw ApiException.badRequest("디렉터리 이름 형식이 아닙니다");
+        }
+        if (name.endsWith(PKG_SUFFIX)) {
+            Path f = dir.resolve(name).normalize();
+            if (!f.startsWith(dir) || !Files.isRegularFile(f)) {
+                throw ApiException.notFound("D3FEND 패키지 " + name);
+            }
+            try (InputStream in = Files.newInputStream(f)) {
+                return importPackage(in, name, actor);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
         }
         Path d = dir.resolve(name).normalize();
         if (!d.startsWith(dir) || !Files.isDirectory(d)) {

@@ -6,6 +6,7 @@ import com.scenarioalert.engine.auth.RequireRole;
 import com.scenarioalert.engine.common.ApiException;
 import com.scenarioalert.engine.common.Json;
 import com.scenarioalert.engine.d3fend.D3fendService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -60,6 +61,26 @@ public class D3fendController {
 
     private static String safe(String name, String fallback) {
         return name == null || name.isBlank() ? fallback : name.replaceAll("[^A-Za-z0-9._\\-]", "_");
+    }
+
+    /** 다른 서버로 옮기기: 버전 하나를 패키지(zip)로 내려받는다. 받는 쪽은 /versions/import-package 로 올리거나 D3FEND_DIR 에 둔다. */
+    @GetMapping("/versions/{version}/export")
+    @RequireRole("admin")
+    public ResponseEntity<byte[]> export(@PathVariable String version, User user) {
+        return Downloads.zip(d3fend.exportPackage(version, user.username()), D3fendService.packageName(version));
+    }
+
+    @PostMapping("/versions/import-package")
+    @RequireRole("admin")
+    public Map<String, Object> importPackage(@RequestPart("file") MultipartFile file, User user) {
+        if (file.isEmpty()) {
+            throw ApiException.badRequest("빈 파일입니다");
+        }
+        try (InputStream in = file.getInputStream()) {
+            return d3fend.importPackage(in, safe(file.getOriginalFilename(), "package.zip"), user.username());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     @GetMapping("/files")
