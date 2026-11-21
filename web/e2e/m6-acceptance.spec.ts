@@ -1,4 +1,4 @@
-// M6 수용 기준: 화면에서 단일룰 2개를 만들고 순서도로 이어 silent 반영까지 코드 수정 없이 완료한다.
+// M6 수용 기준: 화면에서 이벤트 탐지모듈(단일룰) 2개를 만들고 순서도로 이어 silent 반영까지 코드 수정 없이 완료한다.
 //
 // 1) 단일룰 A(시그니처)와 B(카운트)를 양식으로 만들고 저장 → 백테스트 → silent
 // 2) 새 순서도: A 를 캔버스로 끌어다 놓고, B 와 경보 노드를 추가해 시작 → A → B → 경보로 잇는다
@@ -36,7 +36,15 @@ async function backtest(page: Page) {
 
 async function toSilent(page: Page) {
   await page.getByTestId('status-silent').click();
-  await expect(page.getByTestId('status-current')).toHaveText('조용히 운영');
+  await expect(page.getByTestId('status-current')).toHaveText('테스트운영');
+}
+
+/** 시나리오 분석 → [이벤트 탐지모듈 관리] 새 창. 모듈 만들기·상세는 그 창의 오른쪽 사이드 패널에서 한다 */
+async function openModules(page: Page): Promise<Page> {
+  await page.getByTestId('nav-scenarios').click();
+  const [pop] = await Promise.all([page.waitForEvent('popup'), page.getByTestId('modules-popup').click()]);
+  await expect(pop.getByTestId('rule-list')).toBeVisible();
+  return pop;
 }
 
 /** 노드 핸들 끼리 마우스로 끌어 화살표를 잇는다. */
@@ -51,50 +59,55 @@ async function connect(page: Page, from: Locator, to: Locator) {
   await page.mouse.up();
 }
 
-test('단일룰 2개 → 순서도 → silent (화면만으로)', async ({ page, request }) => {
+test('이벤트 탐지모듈 2개 → 순서도 → silent (화면만으로)', async ({ page, request }) => {
   await login(page);
 
-  // ---------- 단일룰 A: 시그니처 (IPS 에서 특정 시그니처) ----------
-  await page.getByTestId('nav-rules').click();
-  await page.getByTestId('rule-new').click();
-  await page.getByTestId('rule-id').fill(RULE_A);
-  await page.getByTestId('rule-name').fill('E2E 시그니처 룰');
-  await page.getByTestId('rule-type-signature').check();
-  await page.getByTestId('rule-dtp-IPS').check();
-  await page.getByTestId('filter-add-cond-filter').click();
-  await page.getByTestId('filter-field-filter.all[0]').selectOption('signature_name');
-  await page.getByTestId('filter-op-filter.all[0]').selectOption('eq');
-  await page.getByTestId('filter-value-filter.all[0]').fill('E2E Probe Alpha');
-  await expect(page.getByTestId('rule-compile-state')).toHaveText(/검증 통과/);
-  await expect(page.getByTestId('rule-sql')).toContainText('INSERT INTO');
-  await page.getByTestId('rule-preview').click();
-  await expect(page.getByTestId('preview-result')).toBeVisible();
-  await save(page, 'rule-save', 'E2E 생성');
-  await expect(page).toHaveURL(new RegExp(`/single-rules/${RULE_A}$`));
-  await expect(page.getByTestId('status-current')).toHaveText('초안');
-  await backtest(page);
-  await toSilent(page);
+  // ---------- 이벤트 탐지모듈 A: 시그니처 (IPS 에서 특정 시그니처) ----------
+  const pop = await openModules(page);
+  await pop.getByTestId('rule-new').click();
+  await expect(pop.getByTestId('module-side-panel')).toBeVisible();
+  await pop.getByTestId('rule-id').fill(RULE_A);
+  await pop.getByTestId('rule-name').fill('E2E 시그니처 룰');
+  await pop.getByTestId('rule-type-signature').check();
+  await pop.getByTestId('rule-dtp-IPS').check();
+  await pop.getByTestId('filter-add-cond-filter').click();
+  await pop.getByTestId('filter-field-filter.all[0]').selectOption('signature_name');
+  await pop.getByTestId('filter-op-filter.all[0]').selectOption('eq');
+  await pop.getByTestId('filter-value-filter.all[0]').fill('E2E Probe Alpha');
+  await expect(pop.getByTestId('rule-compile-state')).toHaveText(/검증 통과/);
+  await expect(pop.getByTestId('rule-sql')).toContainText('INSERT INTO');
+  await pop.getByTestId('rule-preview').click();
+  await expect(pop.getByTestId('preview-result')).toBeVisible();
+  await save(pop, 'rule-save', 'E2E 생성');
+  await expect(pop.getByTestId('module-side-panel')).toContainText(RULE_A); // 이 창 안에서 그대로 이어서 본다
+  await expect(pop).toHaveURL(/\/popup\/modules$/);
+  await expect(page).toHaveURL(/\/scenarios$/); // 원래 창은 그대로
+  await expect(pop.getByTestId('status-current')).toHaveText('초안');
+  await backtest(pop);
+  await toSilent(pop);
 
-  // ---------- 단일룰 B: 카운트 (10분 안에 서로 다른 목적지 20개 이상, 445 포트) ----------
-  await page.getByTestId('nav-rules').click();
-  await page.getByTestId('rule-new').click();
-  await page.getByTestId('rule-id').fill(RULE_B);
-  await page.getByTestId('rule-name').fill('E2E 카운트 룰');
-  await page.getByTestId('rule-type-count').check();
-  await page.getByTestId('rule-dtp-IPS').check();
-  await page.getByTestId('rule-dtp-FIREWALL').check();
-  await page.getByTestId('filter-add-cond-filter').click();
-  await page.getByTestId('filter-field-filter.all[0]').selectOption('dst_port');
-  await page.getByTestId('filter-op-filter.all[0]').selectOption('eq');
-  await page.getByTestId('filter-value-filter.all[0]').fill('445');
-  await page.getByTestId('rule-agg-func').selectOption('distinct_count');
-  await page.getByTestId('rule-agg-field').selectOption('dst_ip');
-  await page.getByTestId('rule-threshold').fill('20');
-  await expect(page.getByTestId('rule-compile-state')).toHaveText(/검증 통과/);
-  await save(page, 'rule-save', 'E2E 생성');
-  await expect(page).toHaveURL(new RegExp(`/single-rules/${RULE_B}$`));
-  await backtest(page);
-  await toSilent(page);
+  // ---------- 이벤트 탐지모듈 B: 카운트 (10분 안에 서로 다른 목적지 20개 이상, 445 포트) ----------
+  await pop.getByTestId('rule-new').click();
+  await expect(pop.getByTestId('module-side-panel')).toBeVisible();
+  await pop.getByTestId('rule-id').fill(RULE_B);
+  await pop.getByTestId('rule-name').fill('E2E 카운트 룰');
+  await pop.getByTestId('rule-type-count').check();
+  await pop.getByTestId('rule-dtp-IPS').check();
+  await pop.getByTestId('rule-dtp-FIREWALL').check();
+  await pop.getByTestId('filter-add-cond-filter').click();
+  await pop.getByTestId('filter-field-filter.all[0]').selectOption('dst_port');
+  await pop.getByTestId('filter-op-filter.all[0]').selectOption('eq');
+  await pop.getByTestId('filter-value-filter.all[0]').fill('445');
+  await pop.getByTestId('rule-agg-func').selectOption('distinct_count');
+  await pop.getByTestId('rule-agg-field').selectOption('dst_ip');
+  await pop.getByTestId('rule-threshold').fill('20');
+  await expect(pop.getByTestId('rule-compile-state')).toHaveText(/검증 통과/);
+  await save(pop, 'rule-save', 'E2E 생성');
+  await expect(pop.getByTestId('module-side-panel')).toContainText(RULE_B);
+  await expect(pop.getByTestId(`rule-link-${RULE_B}`)).toBeVisible(); // 목록도 새로 읽었다
+  await backtest(pop);
+  await toSilent(pop);
+  await pop.close();
 
   // ---------- 순서도: 시작 → A → (30분 내) B → 경보 ----------
   await page.getByTestId('nav-scenarios').click();

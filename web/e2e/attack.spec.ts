@@ -92,8 +92,8 @@ test('ATT&CK 버전 내보내기 → 삭제 → 패키지로 다시 가져오기
 
 test('룰·순서도에서 기법 고르기, 경보의 기법 표시', async ({ page }) => {
   await login(page, 'author', 'author123');
-  // 단일룰 편집기: 저장된 기법이 이름과 함께 보이고, 찾아서 더할 수 있다 (저장하지 않는다)
-  await page.goto('/single-rules/SR_WEB_SERVER_DOWNLOAD');
+  // 이벤트 탐지모듈 편집기: 저장된 기법이 이름과 함께 보이고, 찾아서 더할 수 있다 (저장하지 않는다)
+  await page.goto('/scenarios/detections/SR_WEB_SERVER_DOWNLOAD');
   const picker = page.getByTestId('rule-attack');
   await expect(picker.getByTestId('attack-chip-T1105')).toContainText('Ingress Tool Transfer');
   await page.getByTestId('rule-attack-input').fill('lateral tool');

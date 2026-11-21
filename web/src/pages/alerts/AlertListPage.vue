@@ -128,8 +128,8 @@ function toggleSev(s: string, on: boolean) {
           <div class="inline-pair">
             <select v-model="f.source_type">
               <option value="">전체</option>
-              <option value="scenario">순서도</option>
-              <option value="single_rule">단일룰</option>
+              <option value="scenario">시나리오</option>
+              <option value="single_rule">이벤트 탐지모듈</option>
             </select>
             <input v-model="f.source_id" placeholder="ID" data-testid="alert-filter-source" />
           </div>
@@ -175,7 +175,7 @@ function toggleSev(s: string, on: boolean) {
             <td><RouterLink :to="`/alerts/${a.alert_id}`" :data-testid="`alert-link-${a.alert_id}`">{{ a.title }}</RouterLink></td>
             <td>{{ a.org_id }}</td>
             <td>{{ a.entity }}</td>
-            <td class="small">{{ a.source_type === 'scenario' ? '순서도' : '단일룰' }} {{ a.source_id }} v{{ a.source_version }}</td>
+            <td class="small">{{ a.source_type === 'scenario' ? '시나리오' : '이벤트 탐지모듈' }} {{ a.source_id }} v{{ a.source_version }}</td>
             <td class="small"><AttackChips :items="a.attack" compact /></td>
             <td class="small">{{ fmtTime(a.first_seen) }}<br />{{ fmtTime(a.last_seen) }}</td>
             <td class="num">{{ a.hit_count }}</td>

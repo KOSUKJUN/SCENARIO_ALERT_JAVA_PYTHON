@@ -48,7 +48,7 @@ class ScenarioEvaluationTest {
                 new AppProperties.ClickHouse("http://localhost:8123", "", "", "", "", "", ""),
                 new AppProperties.Case("", ""),
                 new AppProperties.Python(exe, TestFiles.ROOT.resolve("python").toString(), dir.toString(), 2, 10),
-                new AppProperties.Init(false, 0, "draft"));
+                new AppProperties.Init(false, 0, "draft", false));
     }
 
     @BeforeAll

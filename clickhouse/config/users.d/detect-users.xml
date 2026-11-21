@@ -20,9 +20,10 @@
             <quota>default</quota>
             <networks><ip>::/0</ip></networks>
             <grants>
-                <query>GRANT SELECT ON default.log_integrated_success_all</query>
-                <query>GRANT SELECT ON default.log_integrated_success_store</query>
+                <query>GRANT SELECT ON codlog.log_integrated_success_all</query>
                 <query>GRANT SELECT, INSERT, ALTER DELETE, dictGet ON detect.*</query>
+                <!-- 경보 본문 테이블: 넣기, 등급 상향 때 이전 행 지우기(가벼운 DELETE 는 ALTER UPDATE(_row_exists) 권한도 쓴다) -->
+                <query>GRANT SELECT, INSERT, ALTER DELETE, ALTER UPDATE ON codlog.alert_integrated_all</query>
                 <query>GRANT SYSTEM RELOAD DICTIONARY ON *.*</query>
             </grants>
         </detect>
@@ -32,8 +33,7 @@
             <quota>default</quota>
             <networks><ip>::/0</ip></networks>
             <grants>
-                <query>GRANT SELECT ON default.log_integrated_success_all</query>
-                <query>GRANT SELECT ON default.log_integrated_success_store</query>
+                <query>GRANT SELECT ON codlog.log_integrated_success_all</query>
                 <query>GRANT SELECT, INSERT, ALTER DELETE, dictGet ON detect.*</query>
             </grants>
         </detect_bt>

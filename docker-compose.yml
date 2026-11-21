@@ -23,6 +23,8 @@ x-server-env: &server-env
   CH_BT_PASSWORD: ${CH_BT_PASSWORD:-detect_bt_pw}
   CH_ADMIN_USER: ${CH_ADMIN_USER:-default}
   CH_ADMIN_PASSWORD: ${CH_ADMIN_PASSWORD:-admin_pw}
+  # 개발 스택의 ClickHouse 는 원본 로그·경보 테이블 사본(clickhouse/source)을 init 이 만든다. 실제 테이블이 있는 서버에 붙이면 false
+  CH_MANAGE_SOURCE: ${CH_MANAGE_SOURCE:-true}
   CASE_WEBHOOK_URL: ${CASE_WEBHOOK_URL:-http://mockcase:8090/api/alerts}
   CASE_SERVICE_TOKEN: ${CASE_SERVICE_TOKEN:-case-service-token}
   PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}

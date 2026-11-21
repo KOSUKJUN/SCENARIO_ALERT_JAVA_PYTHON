@@ -1,5 +1,6 @@
 package com.scenarioalert.engine.it;
 
+import com.scenarioalert.engine.alerting.AlertStore;
 import com.scenarioalert.engine.InitService;
 import com.scenarioalert.engine.TestFiles;
 import com.scenarioalert.engine.attack.AttackService;
@@ -81,8 +82,10 @@ final class ItSupport {
         for (String t : List.of(InitService.SOURCE_STORE, "detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen")) {
             ch.command("TRUNCATE TABLE " + t, Map.of(), Purpose.ADMIN);
         }
+        ch.command("DELETE FROM " + AlertStore.TABLE + " WHERE _data_type IN ('" + AlertStore.DT_SCENARIO + "', '"
+                + AlertStore.DT_MODULE + "')", Map.of(), Purpose.ADMIN);
         db.txRun(() -> {
-            for (String t : List.of("alerts", "rule_runs", "backtest_jobs", "known_incidents", "scenario_rule_refs",
+            for (String t : List.of("alert_state", "rule_runs", "backtest_jobs", "known_incidents", "scenario_rule_refs",
                     "scenario_versions", "scenarios", "org_rule_params", "single_rule_versions", "single_rules", "asset_tags",
                     "assets", "list_items", "lists", "log_sources", "org_cidrs", "orgs", "sessions", "audit_log")) {
                 db.execute("DELETE FROM " + t, Map.of());
@@ -119,6 +122,8 @@ final class ItSupport {
         }
         samples.insertEvents(rows);
         Map<String, Object> setup = exp.get("setup") == null ? Map.of() : (Map<String, Object>) exp.get("setup");
+        ch.command("DELETE FROM " + AlertStore.TABLE + " WHERE _data_type IN ('" + AlertStore.DT_SCENARIO + "', '"
+                + AlertStore.DT_MODULE + "')", Map.of(), Purpose.ADMIN);
         db.txRun(() -> {
             for (Object o : (List<Object>) setup.getOrDefault("assets", List.of())) {
                 List<Object> a = (List<Object>) o;

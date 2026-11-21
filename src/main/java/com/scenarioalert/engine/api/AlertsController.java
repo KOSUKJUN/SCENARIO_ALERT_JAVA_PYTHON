@@ -1,5 +1,6 @@
 package com.scenarioalert.engine.api;
 
+import com.scenarioalert.engine.alerting.AlertStore;
 import com.scenarioalert.engine.attack.AttackBundle;
 import com.scenarioalert.engine.auth.AuthService.User;
 import com.scenarioalert.engine.auth.RequireRole;
@@ -38,8 +39,10 @@ public class AlertsController {
     private final Db db;
     private final Repo repo;
     private final ClickHouse ch;
+    private final AlertStore store;
 
-    public AlertsController(Db db, Repo repo, ClickHouse ch) {
+    public AlertsController(Db db, Repo repo, ClickHouse ch, AlertStore store) {
+        this.store = store;
         this.db = db;
         this.repo = repo;
         this.ch = ch;
@@ -91,7 +94,8 @@ public class AlertsController {
             pr.put("tf", Kst.parse(timeFrom));
         }
         if (timeTo != null && !timeTo.isEmpty()) {
-            where.add("first_seen <= :tt");
+            // 최초 시각은 ClickHouse 본문에 있다. 상태의 생성 시각(= 최초 탐지 직후)으로 거른다
+            where.add("created_at <= :tt");
             pr.put("tt", Kst.parse(timeTo));
         }
         if (technique != null && !technique.isEmpty()) {
@@ -103,23 +107,34 @@ public class AlertsController {
             pr.put("tech", technique.contains(".") ? technique : technique + "%");
         }
         String w = String.join(" AND ", where);
+        // 상태(MariaDB alert_state)로 거르고 쪽을 나눈 뒤, 그 쪽의 경보 본문(제목·최초 시각·횟수…)을 ClickHouse 에서 붙인다
         List<Map<String, Object>> items = db.rows("SELECT alert_id, source_type, source_id, source_version, org_id, entity_type, "
-                + "entity, severity, title, alert_node, first_seen, last_seen, hit_count, silent, delivery_status, "
-                + "delivery_attempts, case_ref, verdict, created_at, upgraded_at, attack FROM alerts WHERE " + w
+                + "entity, severity, alert_node, last_seen, ch_window_ms, silent, delivery_status, "
+                + "delivery_attempts, case_ref, verdict, created_at, upgraded_at, attack FROM alert_state WHERE " + w
                 + " ORDER BY created_at DESC LIMIT :n OFFSET :off", pr);
-        items.forEach(a -> a.put("attack", a.get("attack") == null ? List.of() : Json.load(Db.str(a, "attack"))));
-        Map<String, Object> total = db.row("SELECT COUNT(*) AS n FROM alerts WHERE " + w, pr);
+        Map<String, Map<String, Object>> bodies = store.findMany(items.stream().map(a -> Db.str(a, "alert_id")).toList(),
+                items.stream().map(a -> Db.lng(a, "ch_window_ms")).toList());
+        items.forEach(a -> {
+            a.put("attack", a.get("attack") == null ? List.of() : Json.load(Db.str(a, "attack")));
+            a.putAll(AlertStore.toApi(bodies.get(Db.str(a, "alert_id"))));
+            a.remove("ch_window_ms");
+        });
+        Map<String, Object> total = db.row("SELECT COUNT(*) AS n FROM alert_state WHERE " + w, pr);
         return Json.obj("total", total == null ? 0 : Db.lng(total, "n"), "items", items);
     }
 
+    /** 경보 = 상태(MariaDB) + 본문(ClickHouse). first_seen 은 ISO 문자열, first_seen_t 는 근거 조회용 시각. */
     private Map<String, Object> getAlert(String alertId) {
-        Map<String, Object> a = db.row("SELECT * FROM alerts WHERE alert_id=:id", p("id", alertId));
+        Map<String, Object> a = db.row("SELECT * FROM alert_state WHERE alert_id=:id", p("id", alertId));
         if (a == null) {
             throw new ApiException(404, "경보가 없습니다");
         }
         a.put("path", Json.load(Db.str(a, "path")));
         a.put("attack", a.get("attack") == null ? List.of() : Json.load(Db.str(a, "attack")));
         a.put("d3fend", a.get("d3fend") == null ? List.of() : Json.load(Db.str(a, "d3fend")));
+        Map<String, Object> body = store.find(alertId, Db.lng(a, "ch_window_ms"));
+        a.putAll(AlertStore.toApi(body));
+        a.put("first_seen_t", body == null ? Db.time(a, "created_at") : ClickHouse.time(body, "event_sdt"));
         return a;
     }
 
@@ -136,6 +151,8 @@ public class AlertsController {
                 graph = g == null ? null : Json.load(Db.str(g, "graph"));
             }
             a.put("graph", graph);
+            a.remove("first_seen_t");
+            a.remove("ch_window_ms");
             a.put("exception_lists", db.rows("SELECT list_id, kind, description FROM lists WHERE kind IN ('ip','cidr') "
                     + "ORDER BY list_id"));
             return a;
@@ -163,7 +180,7 @@ public class AlertsController {
         List<Map<String, Object>> evs = ch.query("SELECT " + EVENT_COLUMNS + " FROM detect.v_events "
                         + "WHERE mgr_time >= {f:DateTime64(3)} AND mgr_time <= {t:DateTime64(3)} AND has({ids:Array(String)}, event_id) "
                         + "ORDER BY mgr_time LIMIT 1000",
-                p("f", Kst.fmt(Db.time(a, "first_seen").minusDays(1)), "t", Kst.fmt(Db.time(a, "last_seen").plusDays(1)),
+                p("f", Kst.fmt(((java.time.LocalDateTime) a.get("first_seen_t")).minusDays(1)), "t", Kst.fmt(Db.time(a, "last_seen").plusDays(1)),
                         "ids", new ArrayList<>(all)));
         for (Map<String, Object> e : evs) {
             e.put("mgr_time", ClickHouse.time(e, "mgr_time"));
@@ -199,7 +216,7 @@ public class AlertsController {
         String exList = Body.optStr(body, "exception_list");
         db.txRun(() -> {
             Map<String, Object> a = getAlert(alertId);
-            db.execute("UPDATE alerts SET verdict=:v, verdict_note=:n, verdict_at=NOW(3) WHERE alert_id=:id",
+            db.execute("UPDATE alert_state SET verdict=:v, verdict_note=:n, verdict_at=NOW(3) WHERE alert_id=:id",
                     p("v", v, "n", note, "id", alertId));
             if (exList != null && !exList.isEmpty()) {
                 addException(a, exList, user.username(), note);
@@ -229,7 +246,7 @@ public class AlertsController {
             if (Db.bool(a, "silent")) {
                 throw new ApiException(400, "silent 경보는 전달하지 않습니다");
             }
-            db.execute("UPDATE alerts SET delivery_status='pending', delivery_attempts=0, next_delivery_at=NULL "
+            db.execute("UPDATE alert_state SET delivery_status='pending', delivery_attempts=0, next_delivery_at=NULL "
                     + "WHERE alert_id=:id", p("id", alertId));
             db.audit(user.username(), "alert.redeliver", alertId, null);
         });
@@ -249,16 +266,16 @@ public class AlertsController {
         db.txRun(() -> {
             Map<String, Object> a;
             if (alertId != null && !alertId.isEmpty()) {
-                a = db.row("SELECT alert_id FROM alerts WHERE alert_id=:id", p("id", alertId));
+                a = db.row("SELECT alert_id FROM alert_state WHERE alert_id=:id", p("id", alertId));
             } else if (caseRef != null && !caseRef.isEmpty()) {
-                a = db.row("SELECT alert_id FROM alerts WHERE case_ref=:c", p("c", caseRef));
+                a = db.row("SELECT alert_id FROM alert_state WHERE case_ref=:c", p("c", caseRef));
             } else {
                 throw new ApiException(400, "alert_id 또는 case_ref 가 필요합니다");
             }
             if (a == null) {
                 throw new ApiException(404, "경보가 없습니다");
             }
-            db.execute("UPDATE alerts SET verdict=:v, verdict_note=:n, verdict_at=NOW(3), case_ref=COALESCE(:c, case_ref) "
+            db.execute("UPDATE alert_state SET verdict=:v, verdict_note=:n, verdict_at=NOW(3), case_ref=COALESCE(:c, case_ref) "
                     + "WHERE alert_id=:id", p("v", v, "n", Body.optStr(body, "note"), "c", caseRef, "id", Db.str(a, "alert_id")));
             db.audit("case-system", "alert.verdict", Db.str(a, "alert_id"), body);
         });

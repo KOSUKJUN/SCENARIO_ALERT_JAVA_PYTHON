@@ -3,7 +3,7 @@ import type { Severity, Status } from './types';
 
 export const STATUS_LABEL: Record<string, string> = {
   draft: '초안',
-  silent: '조용히 운영',
+  silent: '테스트운영',
   active: '운영',
   disabled: '중지',
 };
@@ -37,11 +37,11 @@ export const ROLE_LABEL: Record<string, string> = {
 
 export const NODE_TYPE_LABEL: Record<string, string> = {
   start: '시작',
-  rule: '단일룰',
-  check: '룰 확인(마름모)',
-  asset: '자산 확인(마름모)',
-  and: '모두 합류(AND)',
-  or: '하나 합류(OR)',
+  rule: '이벤트 탐지모듈',
+  check: '탐지 확인',
+  asset: '자산 확인',
+  and: '모두 충족 (AND)',
+  or: '하나라도 (OR)',
   alert: '경보',
 };
 

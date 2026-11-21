@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// 단일룰 편집기: 왼쪽 양식(또는 JSON), 오른쪽 변환된 SQL 과 미리보기. 검증은 서버(/single-rules/compile)가 한다.
+// 이벤트 탐지모듈 편집기: 왼쪽 양식(또는 JSON), 오른쪽 변환된 SQL 과 미리보기. 검증은 서버(/single-rules/compile)가 한다.
 import { computed, nextTick, ref, watch, type Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ApiError, api, enc } from '../../api';
 import { has } from '../../auth';
 import { useMeta, watchDebounced } from '../../composables';
+import ModuleIcon from '../../components/ModuleIcon.vue';
 import AttackPicker from '../../components/AttackPicker.vue';
 import D3fendPicker from '../../components/D3fendPicker.vue';
 import BacktestPanel from '../../components/BacktestPanel.vue';
@@ -26,9 +27,17 @@ import RuleRunsTab from './RuleRunsTab.vue';
 import RuleVersionsTab from './RuleVersionsTab.vue';
 import { fieldAvailability, issuesFor, type FormIssue } from './filter';
 
-const props = defineProps<{ ruleId?: string }>();
+/**
+ * embedded: 시나리오 편집기의 옆 패널에서 연다. 저장해도 주소를 바꾸지 않고 saved 를 알린다.
+ * entityType: 새로 만들 때 대상 유형 (시나리오의 대상 유형과 맞춘다).
+ */
+/** withTabs: 옆 패널에서도 아래 탭(백테스트·버전·실행·히트)을 보인다 (모듈 관리 새 창) */
+const props = defineProps<{ ruleId?: string; embedded?: boolean; entityType?: string; withTabs?: boolean }>();
+const emit = defineEmits<{ saved: [ruleId: string]; close: []; dirty: [v: boolean] }>();
 const router = useRouter();
-const isNew = computed(() => !props.ruleId);
+/** 패널 안에서 새로 저장하면 그때부터 이 ID 로 편집한다 (주소가 없으므로 props 대신 쓴다) */
+const currentId = ref(props.ruleId ?? '');
+const isNew = computed(() => !currentId.value);
 const canEdit = computed(() => has('author'));
 const meta = useMeta();
 
@@ -64,7 +73,7 @@ const dirty = ref(false);
 let loading = false;
 
 function newDefinition(m: MetaFields): RuleDefinition {
-  const et = m.entity_types[0];
+  const et = m.entity_types.find((e) => e.type === props.entityType) ?? m.entity_types[0];
   return {
     id: '',
     name: '',
@@ -116,13 +125,13 @@ watch(
   (m) => {
     if (!m) return;
     if (isNew.value) {
-      const draft = takeImportedDraft();
+      const draft = props.embedded ? null : takeImportedDraft();
       if (draft) setDef(draft, true);
       else setDef(newDefinition(m));
       return;
     }
     api
-      .get<RuleDetail>(`/single-rules/${enc(props.ruleId ?? '')}`)
+      .get<RuleDetail>(`/single-rules/${enc(currentId.value)}`)
       .then((r) => {
         setDef(stripStatus(r.definition));
         summary.value = r.rule;
@@ -139,6 +148,7 @@ watch(
   },
   { deep: true },
 );
+watch(dirty, (v) => emit('dirty', v));
 
 // 변환 SQL (입력이 600ms 멈추면)
 let compileSeq = 0;
@@ -280,12 +290,15 @@ async function save(note: string) {
     const body = { definition: def.value, change_note: note || null };
     const r = isNew.value
       ? await api.post<RuleSaveResponse>('/single-rules', body)
-      : await api.put<RuleSaveResponse>(`/single-rules/${enc(props.ruleId ?? '')}`, body);
+      : await api.put<RuleSaveResponse>(`/single-rules/${enc(currentId.value)}`, body);
     saveOpen.value = false;
     summary.value = r.rule;
     setDef(stripStatus(r.definition));
     saveMsg.value = `저장했습니다 (v${r.rule.version})${r.warnings.length ? ` · 경고 ${r.warnings.length}건` : ''}`;
-    if (isNew.value) await router.replace(`/single-rules/${r.rule.rule_id}`);
+    const wasNew = isNew.value;
+    currentId.value = r.rule.rule_id;
+    if (props.embedded) emit('saved', r.rule.rule_id);
+    else if (wasNew) await router.replace(`/scenarios/detections/${r.rule.rule_id}`);
   } catch (e) {
     saveError.value = e;
     saveOpen.value = false;
@@ -295,8 +308,9 @@ async function save(note: string) {
 }
 
 async function changeStatus(s: Status) {
-  const r = await api.post<{ rule: RuleSummary }>(`/single-rules/${enc(props.ruleId ?? '')}/status`, { status: s });
+  const r = await api.post<{ rule: RuleSummary }>(`/single-rules/${enc(currentId.value)}/status`, { status: s });
   summary.value = r.rule;
+  if (props.embedded) emit('saved', r.rule.rule_id);
 }
 
 function loadVersion(d: RuleDefinition) {
@@ -315,16 +329,20 @@ const tabs = computed(() => [
 <template>
   <ErrorBox v-if="meta.error.value || loadError" :error="meta.error.value || loadError" />
   <LoadingBox v-else-if="!def || !m" />
-  <div v-else class="page rule-editor">
+  <div v-else :class="['page', 'rule-editor', { embedded }]">
+    <RouterLink v-if="!embedded" to="/scenarios" class="back-link" data-testid="rule-back">← 시나리오 분석</RouterLink>
     <div class="page-head">
       <h2>
-        {{ isNew ? '새 단일룰' : `단일룰 ${ruleId}` }}
+        <ModuleIcon class="title-ico" :size="20" />
+        {{ isNew ? '새 이벤트 탐지모듈' : def.name || currentId }}
+        <span v-if="!isNew" class="item-id title-id">{{ currentId }}</span>
         <span v-if="dirty" class="dirty" data-testid="dirty">● 저장 안 됨</span>
       </h2>
       <div class="actions">
-        <RouterLink to="/single-rules" class="button">목록</RouterLink>
-        <button data-testid="rule-json-toggle" @click="toggleJson">{{ jsonMode ? '양식으로 편집' : 'JSON 보기/편집' }}</button>
+        <RouterLink v-if="embedded && !withTabs && !isNew" :to="`/scenarios/detections/${currentId}`" class="button" target="_blank" title="백테스트·이력은 전체 화면에서">전체 화면 ↗</RouterLink>
+        <button data-testid="rule-json-toggle" @click="toggleJson">{{ jsonMode ? '양식으로 편집' : 'JSON' }}</button>
         <button v-if="canEdit" class="primary" data-testid="rule-save" @click="saveOpen = true">저장</button>
+        <button v-if="embedded" class="icon-btn" aria-label="닫기" data-testid="rule-drawer-close" @click="emit('close')">✕</button>
       </div>
     </div>
     <div v-if="summary" class="subhead">
@@ -496,17 +514,17 @@ const tabs = computed(() => [
       </div>
     </div>
 
-    <CardBox>
+    <CardBox v-if="!embedded || withTabs">
       <TabBar v-model="tab" :tabs="tabs" />
       <div class="tab-body">
         <BacktestPanel v-if="tab === 'backtest' && canEdit" target-type="single_rule" :target-id="isNew ? '' : def.id" :get-definition="() => def" :disabled="isNew" />
         <NoticeBox v-if="tab === 'backtest' && isNew" kind="info">저장한 뒤 백테스트를 실행할 수 있습니다.</NoticeBox>
-        <RuleVersionsTab v-if="tab === 'versions' && ruleId" :rule-id="ruleId" @load="loadVersion" />
-        <RuleRunsTab v-if="tab === 'runs' && ruleId" :rule-id="ruleId" />
-        <RuleHitsTab v-if="tab === 'hits' && ruleId" :rule-id="ruleId" />
+        <RuleVersionsTab v-if="tab === 'versions' && currentId" :rule-id="currentId" @load="loadVersion" />
+        <RuleRunsTab v-if="tab === 'runs' && currentId" :rule-id="currentId" />
+        <RuleHitsTab v-if="tab === 'hits' && currentId" :rule-id="currentId" />
       </div>
     </CardBox>
 
-    <ChangeNoteModal v-if="saveOpen" :title="isNew ? '새 룰 저장' : '새 버전으로 저장'" :busy="saving" @close="saveOpen = false" @submit="save" />
+    <ChangeNoteModal v-if="saveOpen" :title="isNew ? '새 이벤트 탐지모듈 저장' : '새 버전으로 저장'" :busy="saving" @close="saveOpen = false" @submit="save" />
   </div>
 </template>

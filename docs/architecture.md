@@ -92,32 +92,53 @@ def evaluate(hits, asset_tags):
 | 모의 사고처리 시스템 | FastAPI | 의존성 없는 Java 단일 파일 | "시나리오 외에는 Java" |
 | 그래프 검증 | — | `description`, `label` 길이·타입 검사 추가 | 생성 코드에 들어가는 값이라 미리 거른다 |
 | 화면 | — | 버전 탭에 "Python 코드" 보기 | 생성 결과를 바로 확인 |
+| 단일룰 화면 | 메뉴 "단일룰" 따로 | 화면 이름 **이벤트 탐지모듈**, 시나리오 분석의 [이벤트 탐지모듈 관리] 새 창 + 순서도 편집기 옆 패널에서 만들기·편집, 왼쪽 시나리오 그룹 (`scenario_groups`, Flyway V6) (2026-11-21) | 요청 사항. 이벤트 탐지모듈은 시나리오의 재료라 한 화면에서 다룬다. API·DB·룰 ID·스냅샷은 그대로 ([design.md](design.md) 변경 이력) |
 | 대상 유형 | host (src_ip, dst_ip) | host + **org (org_id)** | 사고 사례 "PC 여러 대 동시 감염"은 기관 단위 집계가 필요하다 ([cases.md](cases.md) 2장) |
 | 기본 룰·순서도 | 14 + 7 | 24 + 14 | 사고 사례 12건을 대입해 7 + 6 추가, 1개 수정 ([cases.md](cases.md) 1장). PHP2Shell 3 + 1 추가 (5장) |
-| 원본 이벤트 테이블 | `codlog.log_integrated_success_all`, 필드마다 컬럼 | 운영과 같은 `default.log_integrated_success_all` (Distributed, `fields` JSON, 기관은 로그 수집원 매핑) | 운영 스키마에 맞춤 (2026-11-17). 아래 5장 |
+| 원본 이벤트 테이블 | `codlog.log_integrated_success_all`, 필드마다 컬럼 | 대상 서버와 같은 `codlog.log_integrated_success_all` (MergeTree, `fields` JSON, 기관은 로그 수집원 매핑) | 대상 스키마에 맞춤 (2026-11-17 → 2026-11-21). 아래 5장 |
+| 경보 저장 | MariaDB `alerts` | 본문은 ClickHouse `codlog.alert_integrated_all`, 상태(억제·경로·판정·전달·ATT&CK)는 MariaDB `alert_state` | 요청 (2026-11-21). 아래 5장 |
 
-## 5. 원본 이벤트 테이블 (운영 구조, 2026-11-17)
+## 5. 원본 로그·경보 테이블 (2026-11-21 대상 ClickHouse 구조로 변경)
 
-운영 ClickHouse(25.3, 클러스터 `codvill_cluster`)의 `default.log_integrated_success_all` 과 **같은 이름·구조**를 쓴다
-(테스트 사본: [clickhouse/source/001](../clickhouse/source/001_log_integrated_success_all.sql), 운영 `system.columns`·엔진·정렬 키와 비교해 동일함을 확인).
+대상 ClickHouse(25.3)의 `codlog` DB 두 테이블을 **같은 이름·구조**로 쓴다 (테스트 사본: [clickhouse/source/001](../clickhouse/source/001_log_integrated_success_all.sql),
+[002](../clickhouse/source/002_alert_integrated_all.sql), 대상 서버의 SHOW CREATE TABLE 결과를 그대로 옮김). 접속 주소·계정은 환경 변수(`CH_URL`, `CH_USER` …)로만 받는다.
 
-| 운영 원본 | 탐지 뷰(`detect.v_events`) | 비고 |
+| 테이블 | 엔진·키 | 이 시스템이 하는 일 |
 |---|---|---|
-| `log_integrated_success_all` (Distributed) → `log_integrated_success_store` (MergeTree, `ORDER BY (_collect_time, _parser_cd, _asset_id)`) | 뷰는 Distributed 를 읽는다 | 테스트 환경은 노드 하나짜리 `codvill_cluster` (config.d/detect.xml) |
-| `_event_cd` | `event_id` | |
-| `_collect_time` | `mgr_time` (평가 시간축) | |
-| `_data_type` | `data_tp` | |
-| `_asset_id` (로그 수집원) | `log_source`, **`org_id` = MariaDB `log_sources` 매핑** (딕셔너리 `dict_log_sources`) | 원본에 기관 컬럼이 없다. 매핑 없는 수집원은 `UNASSIGNED`(미지정) 기관으로 탐지 |
-| 공통 필드 (모두 Nullable): event_time, event_type, origin_*, src_ip/port/iso/lat/lng, dst_ip/port, protocol, attack, category, method | 같은 이름 (NULL → '' 또는 NULL 유지) | `src_lat`/`src_lng` 는 문자열 |
-| `fields` (**JSON 타입**) | `ifNull(toString(fields.키), '')` 로 action·risk·payload·uri·url_method… | `count` 도 fields 안의 문자열 (없으면 1건) |
-| `_raw_log`, `_parser_cd`, `_origin_topic`, `_parser_node`, `_init_build_flag` | 쓰지 않음 | 수집 경로 정보 |
+| `codlog.log_integrated_success_all` (원본 로그) | MergeTree 하나, `ORDER BY (_collect_time, _parser_cd, _asset_id)`, 30일 TTL | 읽기만. 탐지 뷰 `detect.v_events` 와 최초 관측 MV(`views/031`)가 이 테이블을 본다 |
+| `codlog.alert_integrated_all` (경보) | ReplacingMergeTree(`_collect_time`), `ORDER BY (window_ms, _data_type, attack, risk)`, 30일 TTL | **이 시스템의 경보 본문을 여기에만 넣는다** (`alerting/AlertStore`) |
 
-- 출력 컬럼은 이전과 같아(+ `log_source`) 단일룰·컴파일러·SQL 스냅샷은 바뀌지 않았다. `search_text` 는 뷰가 계산한다(운영 원본에 인덱스 없음).
-- 최초 관측 MV(`views/031`)는 노드의 store 테이블에 건다. 기관은 적재 시점의 수집원 매핑을 따른다.
-- 테스트 적재(샘플·통합 테스트)는 store 테이블에 바로 넣는다: Distributed 적재는 기본이 비동기라 넣은 직후 조회가 어긋날 수 있다. 운영 적재는 수집 파이프라인이 한다.
-- 수집원 매핑: 설정 > **로그 수집원** (admin). 최근 24시간 이벤트가 있는데 매핑이 없는 수집원을 보여 주고 바로 지정한다. 변경은 딕셔너리를 다시 읽어 1분 안에 반영된다.
-- 테스트 환경 ClickHouse 를 운영과 같은 25.3.2.39 로 올렸다 (JSON 타입). 예전 사본(`codlog.*`)은 init 이 지우고 샘플을 다시 넣는다.
-- 2026-11-17 운영 데이터 관찰: WAF 의 조치 값(ALLOW 등)이 `fields.url_method` 키로 들어오고, TMS·WEB 은 원문 외 필드가 대부분 NULL 이다. 파서 매핑을 확인해야 탐지 룰이 동작한다.
+원본 로그 → 탐지 뷰 매핑은 이전과 같다:
+
+| 원본 | 탐지 뷰(`detect.v_events`) | 비고 |
+|---|---|---|
+| `_event_cd` / `_collect_time` / `_data_type` | `event_id` / `mgr_time` (평가 시간축) / `data_tp` | |
+| `_asset_id` (로그 수집원) | `log_source`, **`org_id` = MariaDB `log_sources` 매핑** (딕셔너리 `dict_log_sources`) | 원본에 기관 컬럼이 없다. 매핑 없는 수집원은 `UNASSIGNED` |
+| 공통 필드 (모두 Nullable) | 같은 이름 | `src_lat`/`src_lng` 는 문자열 |
+| `fields` (**JSON 타입**) | `ifNull(toString(fields.키), '')` 로 action·risk·payload·uri… | `count` 도 fields 안 (없으면 1건) |
+
+### 경보 = ClickHouse 본문 + MariaDB 상태
+
+| 어디 | 무엇 |
+|---|---|
+| ClickHouse `codlog.alert_integrated_all` | `_alert_cd`(= 경보 ID), `_data_type`(**`SCENARIO`** 시나리오 / **`EVENT_MODULE`** 이벤트 탐지모듈 단독), `attack`(= 제목), `risk`(LOW/MEDIUM/HIGH/CRITICAL), `max_lvl`(1~4), `event_sdt`/`event_edt`/`event_time`(최초/최종), `window_ms`(최초 시각의 1시간 구간), `count`(탐지 횟수), `rull_grp_cd`(룰 그룹 코드 = 시나리오 그룹 코드), `group_cd`·`group_nm`(CODPRO 그룹 = 대상 기관 코드·기관명), `src_ip`·`dst_ip`(대상 IP 는 첫 모듈의 대상 필드 칸), 포트·국가·장비·조치·에이전트(첫 근거 이벤트), `tmuser`(작성자), `fields`(기관·대상·출처·버전·경보 노드·대응 절차·모듈 목록·ATT&CK·silent) |
+| MariaDB `alert_state` (Flyway V7, 이전 `alerts`) | 같은 ID 로 억제 상태(출처·기관·대상·등급·최종 시각), 경로(path), 판정, 전달 상태, ATT&CK·D3FEND 스냅샷, `ch_window_ms`(ClickHouse 행 찾기) |
+
+- 같은 경보가 다시 탐지되면 같은 키로 다시 넣어 횟수·최종 시각을 갱신한다(늦게 넣은 행이 남는다). 등급이 오르면 키가 바뀌므로 이전 행을 가벼운 DELETE 로 지우고 넣는다.
+- 같은 시간·제목·등급에 다른 경보가 있으면(다른 기관의 같은 IP) 제목 뒤에 `[기관]` 을 붙여 덮어쓰지 않는다.
+- ClickHouse 쓰기는 MariaDB 트랜잭션 안에서 한다. 실패하면 MariaDB 도 되돌리고 다음 주기에 같은 구간을 다시 평가한다.
+- 테스트운영(silent) 경보도 넣고 `fields.silent=true` 로 표시한다 (다른 화면이 거를 수 있게).
+- 경보 목록·상세·전달 내용은 상태를 MariaDB 에서 고르고 본문을 ClickHouse 에서 붙인다. `rull_grp_cd` 는 경보를 만들 때의 그룹 코드다(나중에 그룹을 바꿔도 그대로).
+- 이전 MariaDB 경보는 V7 이 `alerts_legacy` 로 남기고 init 이 ClickHouse 로 옮긴 뒤 그 행을 지운다.
+
+### 실제 테이블이 있는 서버에 붙일 때
+
+- 대상 서버 경보 테이블은 2026-11-21 에 `group_cd`·`group_nm` 이 추가되고 `grp_cd` → `rull_grp_cd` 이름 변경이 예정돼 있다 (이 시스템은 `rull_grp_cd` 를 쓴다. 이름 변경 전에는 경보 쓰기가 실패한다). 로컬 사본은 `source/003` 이 바꾼다.
+- **`CH_MANAGE_SOURCE=false`** 로 띄운다 (앱 기본값도 false, 개발 스택 compose 만 true). true 면 init 이 `clickhouse/source/` 사본을 만들고 reset-data 가 원본 로그를 비운다.
+  reset-data 는 false 여도 경보 테이블에서 이 시스템이 넣은 행(`SCENARIO`/`EVENT_MODULE`)만 지운다.
+- 탐지 계정 권한: `SELECT` on `codlog.log_integrated_success_all`, `SELECT, INSERT, ALTER DELETE, ALTER UPDATE` on `codlog.alert_integrated_all`
+  (가벼운 DELETE 는 `ALTER UPDATE(_row_exists)` 도 쓴다), `detect.*` 전부.
+- 딕셔너리(020)는 MariaDB 를 원본으로 읽으므로 대상 ClickHouse 가 이 시스템의 MariaDB 에 접속할 수 있어야 한다.
 
 ## 6. MITRE ATT&CK (폐쇄망 내부 사본, 버전 관리)
 

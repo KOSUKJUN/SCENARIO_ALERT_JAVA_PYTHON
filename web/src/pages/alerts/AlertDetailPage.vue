@@ -52,8 +52,8 @@ const groups = computed(() => {
 
 function stepText(s: PathStep): string {
   const parts: string[] = [];
-  if (s.type === 'rule') parts.push(`단일룰 ${s.rule_id ?? ''} 히트`);
-  else if (s.type === 'check') parts.push(`룰 확인 → ${s.result === 'yes' ? `예 (${s.matched_rule_id ?? ''})` : '아니오'}`);
+  if (s.type === 'rule') parts.push(`이벤트 탐지모듈 ${s.rule_id ?? ''} 히트`);
+  else if (s.type === 'check') parts.push(`탐지 확인 → ${s.result === 'yes' ? `예 (${s.matched_rule_id ?? ''})` : '아니오'}`);
   else if (s.type === 'asset') parts.push(`자산 태그 → ${s.result === 'yes' ? `예 (${(s.matched_tags ?? []).join(', ')})` : '아니오'}`);
   else if (s.type === 'alert') parts.push(`경보 (${s.severity ?? ''})`);
   else if (s.rule_id) parts.push(`룰 ${s.rule_id}`);
@@ -100,8 +100,8 @@ const assetVal = (v: unknown) => (Array.isArray(v) ? v.map(String) : cellText(v)
           <div class="kv-row">
             <dt>출처</dt>
             <dd>
-              <RouterLink :to="d.source_type === 'scenario' ? `/scenarios/${d.source_id}` : `/single-rules/${d.source_id}`">
-                {{ d.source_type === 'scenario' ? '순서도' : '단일룰' }} {{ d.source_id }}
+              <RouterLink :to="d.source_type === 'scenario' ? `/scenarios/${d.source_id}` : `/scenarios/detections/${d.source_id}`">
+                {{ d.source_type === 'scenario' ? '시나리오' : '이벤트 탐지모듈' }} {{ d.source_id }}
               </RouterLink>
               v{{ d.source_version }}
             </dd>
@@ -117,6 +117,10 @@ const assetVal = (v: unknown) => (Array.isArray(v) ? v.map(String) : cellText(v)
           </div>
           <div class="kv-row"><dt>최초 / 최종</dt><dd>{{ fmtTime(d.first_seen) }} ~ {{ fmtTime(d.last_seen) }}</dd></div>
           <div class="kv-row"><dt>횟수</dt><dd>{{ d.hit_count }}</dd></div>
+          <div v-if="d.src_ip || d.dst_ip" class="kv-row" data-testid="alert-net"><dt>출발지 → 목적지</dt><dd>{{ d.src_ip ?? "-" }}{{ d.src_port ? `:${d.src_port}` : "" }}{{ d.src_iso ? ` (${d.src_iso})` : "" }} → {{ d.dst_ip ?? "-" }}{{ d.dst_port ? `:${d.dst_port}` : "" }}</dd></div>
+          <div v-if="d.product || d.action" class="kv-row"><dt>장비 · 조치</dt><dd>{{ d.product || "-" }} · {{ d.action || "-" }}</dd></div>
+          <div class="kv-row" data-testid="alert-grp-cd"><dt>룰 그룹 코드</dt><dd>{{ d.rull_grp_cd || "(없음)" }}</dd></div>
+          <div class="kv-row" data-testid="alert-codpro-group"><dt>CODPRO 그룹</dt><dd>{{ d.group_nm || "-" }}{{ d.group_cd ? ` (${d.group_cd})` : "" }}</dd></div>
           <div class="kv-row"><dt>생성 / 상향</dt><dd>{{ fmtTime(d.created_at) }}{{ d.upgraded_at ? ` / 상향 ${fmtTime(d.upgraded_at)}` : '' }}</dd></div>
           <div class="kv-row"><dt>silent</dt><dd><UiBadge v-if="silent">silent (전달 안 함)</UiBadge><template v-else>아니오</template></dd></div>
           <div v-if="showIncident()" class="kv-row">
@@ -151,7 +155,7 @@ const assetVal = (v: unknown) => (Array.isArray(v) ? v.map(String) : cellText(v)
         <template v-if="d.playbook">
           <h4>대응 절차</h4>
           <p class="playbook">{{ d.playbook }}</p>
-          <p class="muted small">룰·순서도 경보 노드에 작성한 절차입니다. 아래 "대응방책" 에 MITRE D3FEND 기준 지정·권고 대응 기법이 있습니다.</p>
+          <p class="muted small">이벤트 탐지모듈·시나리오 경보 노드에 작성한 절차입니다. 아래 "대응방책" 에 MITRE D3FEND 기준 지정·권고 대응 기법이 있습니다.</p>
         </template>
       </CardBox>
     </div>

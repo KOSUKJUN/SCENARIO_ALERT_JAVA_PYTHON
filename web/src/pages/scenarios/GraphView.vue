@@ -5,6 +5,7 @@ import { VueFlow } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
 import type { Graph, PathStep } from '../../types';
+import FlowEdgeView from './FlowEdgeView.vue';
 import FlowNodeView from './FlowNodeView.vue';
 import { gtype, styleEdge, toFlow, type FlowEdge } from './graph';
 
@@ -56,7 +57,10 @@ const view = computed(() => {
       <template #node-scn="p">
         <FlowNodeView :id="p.id" :data="p.data" :highlight="view.hit.has(p.id)" />
       </template>
-      <Background :gap="20" />
+      <template #edge-scn="p">
+        <FlowEdgeView v-bind="p" />
+      </template>
+      <Background :gap="22" :size="1.2" pattern-color="#3a3f48" />
       <Controls :show-interactive="false" />
     </VueFlow>
   </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// ATT&CK 버전 관리 (admin): 번들 올리기 / 서버 디렉터리에서 가져오기, 활성 버전과 비교(룰·순서도 영향), 활성화, 삭제.
+// ATT&CK 버전 관리 (admin): 번들 올리기 / 서버 디렉터리에서 가져오기, 활성 버전과 비교(이벤트 탐지모듈·시나리오 영향), 활성화, 삭제.
 // 폐쇄망 반입: 인터넷이 되는 PC 에서 scripts/fetch_attack 로 받은 enterprise-attack-<버전>.json 을 올리거나
 // 서버의 ATTACK_DIR(기본 data/attack)에 복사한다.
 // 다른 서버로 옮기기: 버전마다 "내보내기" 로 패키지(zip)를 받아, 받는 서버에서 "패키지 가져오기" 로 올리거나 ATTACK_DIR 에 둔다.
@@ -195,7 +195,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
             · <template v-for="[k, label] in DIFF_KEYS" :key="k">{{ label }} {{ diff.summary[k] ?? 0 }} · </template>설명 갱신 {{ diff.summary.updated ?? 0 }}
           </span>
         </p>
-        <h4>현재 단일룰·순서도에 미치는 영향</h4>
+        <h4>현재 이벤트 탐지모듈·시나리오에 미치는 영향</h4>
         <NoticeBox v-if="!diff.impact.length" kind="ok">영향 없음: 참조하는 기법이 모두 {{ diff.to }} 에 그대로 있습니다.</NoticeBox>
         <table v-else class="table" data-testid="attack-impact">
           <thead><tr><th>기법</th><th>상태</th><th>대체</th><th>참조하는 곳</th></tr></thead>
@@ -206,7 +206,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
               <td>{{ i.replacement ?? '-' }}</td>
               <td class="small">
                 <div v-for="r in i.refs" :key="`${r.kind}${r.id}${r.detail}`">
-                  <RouterLink :to="r.kind === 'rule' ? `/single-rules/${r.id}` : `/scenarios/${r.id}`">{{ r.id }}</RouterLink>
+                  <RouterLink :to="r.kind === 'rule' ? `/scenarios/detections/${r.id}` : `/scenarios/${r.id}`">{{ r.id }}</RouterLink>
                   {{ r.name }} <StatusBadge :status="r.status" /> <span class="muted">{{ r.detail ?? '' }}</span>
                 </div>
               </td>
@@ -214,7 +214,7 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
           </tbody>
         </table>
         <p v-if="diff.impact.length" class="warn-text small">
-          활성화해도 탐지는 그대로 동작합니다. 다만 위 룰·순서도는 다음에 저장할 때 기법을 고쳐야 합니다 (없는·폐기 기법은 저장 오류).
+          활성화해도 탐지는 그대로 동작합니다. 다만 위 이벤트 탐지모듈·시나리오는 다음에 저장할 때 기법을 고쳐야 합니다 (없는·폐기 기법은 저장 오류).
         </p>
         <template v-for="[k, label] in DIFF_KEYS" :key="k">
           <details v-if="Array.isArray(diff[k]) && (diff[k] as unknown[]).length">

@@ -82,3 +82,5 @@ app:
     seed-sample: ${SEED_SAMPLE:false}
     sample-hours: ${SAMPLE_HOURS:2}
     builtin-status: ${BUILTIN_STATUS:active}
+    # clickhouse/source/ (원본 로그·경보 테이블 사본) 를 init 이 만들고 reset-data 가 비워도 되는가. 실제 테이블이 있는 서버에서는 false
+    manage-source: ${CH_MANAGE_SOURCE:false}

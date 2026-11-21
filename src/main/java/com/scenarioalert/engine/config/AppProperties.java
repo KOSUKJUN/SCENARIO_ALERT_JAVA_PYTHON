@@ -45,6 +45,10 @@ public record AppProperties(
     public record Python(String executable, String runtimeDir, String codeDir, int workers, int timeoutSec) {
     }
 
-    public record Init(boolean seedSample, double sampleHours, String builtinStatus) {
+    /**
+     * manageSource: clickhouse/source/ (원본 로그·경보 테이블 사본) 를 init 이 만들고 reset-data 가 비워도 되는가.
+     * 개발 스택만 true. 실제 테이블이 있는 ClickHouse 에 붙일 때는 반드시 false (CH_MANAGE_SOURCE=false).
+     */
+    public record Init(boolean seedSample, double sampleHours, String builtinStatus, boolean manageSource) {
     }
 }

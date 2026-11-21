@@ -74,8 +74,8 @@ test('대응방책 연계 현황과 룰·경보 노드의 지정 대응방책', 
   await page.screenshot({ path: `${SHOTS}/4-links.png` });
   await page.keyboard.press('Escape');
 
-  // 단일룰 편집기: 지정 대응방책 칩과 ATT&CK 기준 추천
-  await page.goto('/single-rules/SR_TI_HIT');
+  // 이벤트 탐지모듈 편집기: 지정 대응방책 칩과 ATT&CK 기준 추천
+  await page.goto('/scenarios/detections/SR_TI_HIT');
   const picker = page.getByTestId('rule-d3fend');
   await expect(picker.getByTestId('d3fend-chip-D3-OTF')).toContainText('Outbound Traffic Filtering');
   await expect(picker.getByTestId('d3fend-chip-D3-DNSDL')).toBeVisible();

@@ -50,7 +50,7 @@ public class LifecycleService {
     }
 
     public Map<String, Object> operationStats(String sourceType, String sourceId) {
-        Map<String, Object> r = db.row("SELECT COUNT(*) AS n FROM alerts WHERE source_type=:t AND source_id=:i "
+        Map<String, Object> r = db.row("SELECT COUNT(*) AS n FROM alert_state WHERE source_type=:t AND source_id=:i "
                 + "AND created_at >= NOW() - INTERVAL 30 DAY", p("t", sourceType, "i", sourceId));
         Map<String, Object> a = db.row("SELECT MAX(at) AS since FROM audit_log WHERE target=:i AND action LIKE '%.status' "
                 + "AND JSON_VALUE(detail, '$.to') = 'silent'", p("i", sourceId));

@@ -4,7 +4,7 @@ import type { Json } from './types';
 const BASE = '/api/v1';
 const TOKEN_KEY = 'scenario_token';
 
-/** 검증 오류 한 줄. 단일룰은 path, 순서도는 target/id 를 쓴다. */
+/** 검증 오류 한 줄. 이벤트 탐지모듈(단일룰)는 path, 순서도는 target/id 를 쓴다. */
 export interface ApiIssue {
   message: string;
   path?: string;

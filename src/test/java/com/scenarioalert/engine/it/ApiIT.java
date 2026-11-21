@@ -662,4 +662,47 @@ class ApiIT {
         assertEquals(2, db.rows("SELECT 1 FROM d3fend_versions").size());
         assertEquals("1.6.0", call("GET", "/d3fend/versions", viewer, null).map().get("active"));
     }
+
+    // ------------------------------------------------------------------ 시나리오 그룹 (V6)
+    @Test
+    @SuppressWarnings("unchecked")
+    void scenarioGroupsAssignRenameDelete() throws Exception {
+        String author = login("author", "author123");
+        String viewer = login("viewer", "viewer123");
+        db.txRun(() -> db.execute("DELETE FROM scenario_groups WHERE name LIKE 'IT 그룹%'", Map.of()));
+        assertEquals(403, call("POST", "/scenario-groups", viewer, Map.of("name", "IT 그룹 A")).status());
+        Res c = call("POST", "/scenario-groups", author, Map.of("name", "IT 그룹 A"));
+        assertEquals(201, c.status(), String.valueOf(c.body()));
+        long gid = ((Number) c.map().get("group_id")).longValue();
+        assertTrue(String.valueOf(c.map().get("grp_cd")).matches("SG\\d{3,}"), "자동 그룹 코드: " + c.body());
+        assertEquals(400, call("POST", "/scenario-groups", author, Map.of("name", "IT 그룹 X", "grp_cd", "잘못된 코드")).status());
+        assertEquals(409, call("POST", "/scenario-groups", author, Map.of("name", "IT 그룹 A")).status());
+        assertEquals(400, call("POST", "/scenario-groups", author, Map.of("name", " ")).status());
+
+        // 버전은 그대로, 목록에 group_id
+        Map<String, Object> sc0 = (Map<String, Object>) call("GET", "/scenarios/SC_SMB_WORM", author, null).map().get("scenario");
+        int before = ((Number) sc0.get("version")).intValue();
+        Res a = call("PUT", "/scenario-groups/assign", author, Map.of("group_id", gid, "scenario_ids", List.of("SC_SMB_WORM")));
+        assertEquals(200, a.status(), String.valueOf(a.body()));
+        List<Map<String, Object>> list = (List<Map<String, Object>>) call("GET", "/scenarios", viewer, null).body();
+        Map<String, Object> smb = list.stream().filter(s -> "SC_SMB_WORM".equals(s.get("scenario_id"))).findFirst().orElseThrow();
+        assertEquals(gid, ((Number) smb.get("group_id")).longValue());
+        assertEquals(before, ((Number) smb.get("version")).intValue());
+        Res gl = call("GET", "/scenario-groups", viewer, null);
+        Map<String, Object> g = ((List<Map<String, Object>>) gl.map().get("groups")).stream()
+                .filter(x -> ((Number) x.get("group_id")).longValue() == gid).findFirst().orElseThrow();
+        assertEquals(1, ((Number) g.get("scenario_count")).intValue());
+        assertEquals(404, call("PUT", "/scenario-groups/assign", author,
+                Map.of("group_id", gid, "scenario_ids", List.of("SC_NOT_THERE"))).status());
+
+        Res rn = call("PUT", "/scenario-groups/" + gid, author, Map.of("name", "IT 그룹 B", "grp_cd", "IT_GRP_B"));
+        assertEquals("IT 그룹 B", rn.map().get("name"));
+        assertEquals("IT_GRP_B", rn.map().get("grp_cd"));
+        // 그룹을 지우면 미분류가 된다
+        assertEquals(200, call("DELETE", "/scenario-groups/" + gid, author, null).status());
+        list = (List<Map<String, Object>>) call("GET", "/scenarios", viewer, null).body();
+        smb = list.stream().filter(s -> "SC_SMB_WORM".equals(s.get("scenario_id"))).findFirst().orElseThrow();
+        assertEquals(null, smb.get("group_id"));
+        assertEquals(404, call("DELETE", "/scenario-groups/" + gid, author, null).status());
+    }
 }

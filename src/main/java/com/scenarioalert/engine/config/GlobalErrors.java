@@ -46,7 +46,7 @@ public class GlobalErrors {
 
     @ExceptionHandler(RuleValidationException.class)
     public ResponseEntity<Map<String, Object>> rule(RuleValidationException e) {
-        return body(422, "단일룰 정의가 올바르지 않습니다", e.result.errorMaps(), e.result.warningMaps());
+        return body(422, "이벤트 탐지모듈 정의가 올바르지 않습니다", e.result.errorMaps(), e.result.warningMaps());
     }
 
     @ExceptionHandler(GraphValidationException.class)

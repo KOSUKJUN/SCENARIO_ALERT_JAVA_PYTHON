@@ -50,14 +50,14 @@ const list = <T,>(k: string, xs: T[]) => (showAll.value[k] ? xs : xs.slice(0, MA
       <section class="attack-sec">
         <h4>이 시스템의 탐지</h4>
         <p v-if="!t.data.value.coverage.rules.length && !t.data.value.coverage.scenarios.length" class="warn-text small" data-testid="attack-uncovered">
-          이 기법을 탐지하는 단일룰·순서도가 없습니다.
+          이 기법을 탐지하는 이벤트 탐지모듈·시나리오가 없습니다.
         </p>
         <ul class="plain">
           <li v-for="r in t.data.value.coverage.rules" :key="r.id">
-            단일룰 <RouterLink :to="`/single-rules/${r.id}`">{{ r.id }}</RouterLink> {{ r.name }} <StatusBadge :status="r.status" />
+            이벤트 탐지모듈 <RouterLink :to="`/scenarios/detections/${r.id}`">{{ r.id }}</RouterLink> {{ r.name }} <StatusBadge :status="r.status" />
           </li>
           <li v-for="s in t.data.value.coverage.scenarios" :key="s.id">
-            순서도 <RouterLink :to="`/scenarios/${s.id}`">{{ s.id }}</RouterLink> {{ s.name }} <StatusBadge :status="s.status" />
+            시나리오 <RouterLink :to="`/scenarios/${s.id}`">{{ s.id }}</RouterLink> {{ s.name }} <StatusBadge :status="s.status" />
             <span class="muted small">({{ s.via }})</span>
           </li>
         </ul>

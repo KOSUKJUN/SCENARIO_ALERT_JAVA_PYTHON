@@ -29,7 +29,7 @@ const props = defineProps<{
   readOnly: boolean;
   rename: (id: string, newId: string) => string | null;
 }>();
-const emit = defineEmits<{ changed: []; delete: [] }>();
+const emit = defineEmits<{ changed: []; delete: []; 'edit-rule': [ruleId: string]; 'new-rule': [] }>();
 
 const NODE_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const g = computed(() => props.node?.data?.g);
@@ -100,18 +100,21 @@ const setMeta = <K extends keyof GraphMeta>(k: K, v: GraphMeta[K]) => {
 <template>
   <!-- 노드 -->
   <div v-if="node && g" class="props" data-testid="props-node">
-    <h4>{{ NODE_TYPE_LABEL[g.type] ?? g.type }} 노드</h4>
-    <FormField label="노드 ID" :error="idErr">
-      <input v-model="idText" :disabled="readOnly || g.type === 'start'" data-testid="prop-node-id" @blur="commitId" @keydown.enter="commitId" />
-    </FormField>
-    <FormField v-if="g.type !== 'start'" label="표시 이름 (label, 선택)">
+    <h4>{{ NODE_TYPE_LABEL[g.type] ?? g.type }}</h4>
+    <template v-if="g.type === 'rule'">
+      <FormField label="이벤트 탐지모듈">
+        <RulePicker :rules="rules" :selected="g.rule_id ? [g.rule_id] : []" :multi="false" :disabled="readOnly" @change="(v) => setG('rule_id', v[0] ?? '')" />
+      </FormField>
+      <div v-if="!readOnly" class="prop-actions">
+        <button class="small" :disabled="!g.rule_id" data-testid="prop-rule-edit" @click="emit('edit-rule', g.rule_id ?? '')">선택한 탐지 편집</button>
+        <button class="small" data-testid="prop-rule-new" @click="emit('new-rule')">+ 새로 만들기</button>
+      </div>
+    </template>
+    <FormField v-if="g.type !== 'start'" label="표시 이름 (선택)" hint="비우면 이벤트 탐지모듈 이름·제목을 보여 줍니다">
       <input :value="g.label ?? ''" :disabled="readOnly" data-testid="prop-label" @input="setG('label', ($event.target as HTMLInputElement).value || undefined)" />
     </FormField>
-    <FormField v-if="g.type === 'rule'" label="단일룰 (rule_id)">
-      <RulePicker :rules="rules" :selected="g.rule_id ? [g.rule_id] : []" :multi="false" :disabled="readOnly" @change="(v) => setG('rule_id', v[0] ?? '')" />
-    </FormField>
     <template v-if="g.type === 'check'">
-      <FormField label="확인할 룰 (rule_ids) — 하나라도 히트가 있으면 예">
+      <FormField label="확인할 이벤트 탐지모듈 — 하나라도 히트가 있으면 예">
         <RulePicker :rules="rules" :selected="g.rule_ids ?? []" multi :disabled="readOnly" @change="(v) => setG('rule_ids', v)" />
       </FormField>
       <FormField label="앞뒤 확인 시간 (lookaround)">
@@ -157,6 +160,9 @@ const setMeta = <K extends keyof GraphMeta>(k: K, v: GraphMeta[K]) => {
         <D3fendPicker :model-value="g.d3fend ?? []" :disabled="readOnly" :suggest-for="g.attack ?? []" test-id="prop-d3fend" @update:model-value="(v) => setG('d3fend', v.length ? v : undefined)" />
       </FormField>
     </template>
+    <FormField label="노드 ID" :error="idErr" hint="경보 경로·검증 메시지에 쓰입니다">
+      <input v-model="idText" :disabled="readOnly || g.type === 'start'" data-testid="prop-node-id" @blur="commitId" @keydown.enter="commitId" />
+    </FormField>
     <div v-if="sim" class="sim-box">
       <strong>시뮬레이션</strong>
       <pre class="small">{{ JSON.stringify(sim, null, 2) }}</pre>
@@ -168,28 +174,28 @@ const setMeta = <K extends keyof GraphMeta>(k: K, v: GraphMeta[K]) => {
 
   <!-- 화살표 -->
   <div v-else-if="edge" class="props" data-testid="props-edge">
-    <h4>화살표</h4>
+    <h4>연결</h4>
     <div class="muted">{{ edge.source }} → {{ edge.target }}</div>
-    <FormField v-if="fromDiamond" label="분기 (branch)">
+    <FormField v-if="fromDiamond" label="분기">
       <select :value="edge.sourceHandle ?? ''" :disabled="readOnly" data-testid="prop-edge-branch" @change="setBranch(($event.target as HTMLSelectElement).value)">
         <option value="yes" :disabled="usedBranches.includes('yes')">예 (yes)</option>
         <option value="no" :disabled="usedBranches.includes('no')">아니오 (no)</option>
       </select>
     </FormField>
-    <FormField v-if="needsWithin" label="허용 시간 (within)" hint="앞 노드 성립 후 이 시간 안에 다음 룰 히트가 있어야 합니다">
+    <FormField v-if="needsWithin" label="허용 시간" hint="앞 단계가 성립한 뒤 이 시간 안에 다음 이벤트 탐지모듈 히트가 있어야 이어집니다">
       <DurInput :model-value="edge.data?.within ?? ''" :disabled="readOnly" test-id="prop-edge-within" @update:model-value="(v) => setWithin(v || null)" />
     </FormField>
     <p v-else class="muted small">
-      {{ dst && gtype(dst) === 'rule' ? '시작 노드에서 나가는 화살표에는 허용 시간이 없습니다.' : '허용 시간(within)은 단일룰 노드로 들어가는 화살표에만 씁니다.' }}
+      {{ dst && gtype(dst) === 'rule' ? '시작 노드에서 나가는 화살표에는 허용 시간이 없습니다.' : '허용 시간(within)은 이벤트 탐지모듈 노드로 들어가는 화살표에만 씁니다.' }}
       <button v-if="edge.data?.within" class="small link" @click="setWithin(null)">within 지우기</button>
     </p>
     <div v-for="(m, i) in edgeIssues" :key="i" class="field-error">{{ m }}</div>
-    <button v-if="!readOnly" class="danger" data-testid="prop-delete" @click="emit('delete')">화살표 삭제</button>
+    <button v-if="!readOnly" class="danger" data-testid="prop-delete" @click="emit('delete')">연결 삭제</button>
   </div>
 
   <!-- 순서도 전체 -->
   <div v-else class="props" data-testid="props-graph">
-    <h4>순서도 설정</h4>
+    <h4>시나리오 설정</h4>
     <FormField label="ID" :error="gErr('id')" hint="대문자로 시작, 대문자·숫자·_ (예: SC_SMB_WORM)">
       <input :value="meta.id" :disabled="!isNew || readOnly" data-testid="scenario-id" @input="setMeta('id', ($event.target as HTMLInputElement).value.toUpperCase())" />
     </FormField>
@@ -199,7 +205,7 @@ const setMeta = <K extends keyof GraphMeta>(k: K, v: GraphMeta[K]) => {
     <FormField label="설명">
       <textarea :value="meta.description ?? ''" rows="2" :disabled="readOnly" @input="setMeta('description', ($event.target as HTMLTextAreaElement).value)" />
     </FormField>
-    <FormField label="대상 유형" :error="gErr('entity_type')" hint="같은 유형의 단일룰만 왼쪽 목록에 보입니다">
+    <FormField label="대상 유형" :error="gErr('entity_type')" hint="같은 유형의 이벤트 탐지모듈만 왼쪽 목록에 보입니다">
       <select :value="meta.entity_type" :disabled="readOnly" data-testid="scenario-entity-type" @change="setMeta('entity_type', ($event.target as HTMLSelectElement).value)">
         <option v-for="t in metaFields?.entity_types ?? [{ type: meta.entity_type, fields: [] }]" :key="t.type" :value="t.type">{{ t.type }}</option>
       </select>
@@ -207,9 +213,11 @@ const setMeta = <K extends keyof GraphMeta>(k: K, v: GraphMeta[K]) => {
     <FormField label="억제 시간 (suppress_for)" :error="gErr('suppress_for')" hint="같은 대상에 경보를 다시 만들지 않는 시간 (최대 7일)">
       <DurInput :model-value="meta.suppress_for" :disabled="readOnly" test-id="scenario-suppress-for" @update:model-value="(v) => setMeta('suppress_for', v)" />
     </FormField>
-    <p class="muted small">
-      노드 {{ nodes.length }}개 · 화살표 {{ edges.length }}개. 노드나 화살표를 누르면 속성을 편집할 수 있습니다. 왼쪽 목록에서 끌어다 놓아 노드를
-      추가하고, 노드의 오른쪽 점(마름모는 예=오른쪽, 아니오=아래)을 끌어 화살표를 잇습니다. Delete 키로 선택 항목을 지웁니다.
-    </p>
+    <ol class="howto small">
+      <li>왼쪽에서 이벤트 탐지모듈·블록을 끌어다 놓습니다.</li>
+      <li>노드 오른쪽 점을 끌어 다음 노드에 잇습니다. 확인 노드는 위가 "예", 아래가 "아니오"입니다.</li>
+      <li>노드를 누르면 여기서 설정하고, 이벤트 탐지모듈 노드는 두 번 눌러 바로 편집합니다.</li>
+    </ol>
+    <p class="muted small">노드 {{ nodes.length }}개 · 연결 {{ edges.length }}개 · Delete 키로 선택 항목 삭제</p>
   </div>
 </template>

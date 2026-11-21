@@ -5,6 +5,7 @@ import com.scenarioalert.engine.attack.AttackService;
 import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.ModeRunner;
 import com.scenarioalert.engine.backtest.BacktestService;
+import com.scenarioalert.engine.alerting.AlertStore;
 import com.scenarioalert.engine.ch.ClickHouse;
 import com.scenarioalert.engine.ch.ClickHouse.Purpose;
 import com.scenarioalert.engine.common.AppClock;
@@ -113,7 +114,7 @@ class AcceptanceIT {
         ItSupport.rewindRules(db, base);
         runDetection(base.plusMinutes(50), 1);   // 서버 1대로 앞 50분 → "서버 중단"
         runDetection(end, 2);                    // 서버 2대 동시에 따라잡기
-        alerts = db.rows("SELECT * FROM alerts ORDER BY created_at");
+        alerts = db.rows("SELECT * FROM alert_state ORDER BY created_at");
         hits = allHits();
         runs = db.rows("SELECT rule_id, version, win_from, win_to, status, instance_id FROM rule_runs");
         rules = db.rows("SELECT r.rule_id, r.status, r.last_evaluated_to, r.consecutive_failures, "
@@ -201,6 +202,35 @@ class AcceptanceIT {
             }
         }
         return ids;
+    }
+
+    /** 경보 본문은 ClickHouse codlog.alert_integrated_all 에만 있다: 상태(MariaDB) 마다 같은 ID 의 행이 하나 있어야 한다. */
+    @Test
+    void alertBodiesAreInClickHouse() {
+        assertFalse(alerts.isEmpty());
+        Map<String, Map<String, Object>> bodies = new java.util.HashMap<>();
+        ch.query("SELECT _alert_cd, _data_type, attack, risk, max_lvl, count, event_sdt, event_edt, window_ms, "
+                        + "replaceRegexpOne(IPv6NumToString(ifNull(src_ip, toIPv6('::'))), '^::ffff:', '') AS s, "
+                        + "replaceRegexpOne(IPv6NumToString(ifNull(dst_ip, toIPv6('::'))), '^::ffff:', '') AS d, "
+                        + "toString(fields.org_id) AS org, toString(fields.source_id) AS src FROM " + AlertStore.TABLE
+                        + " FINAL WHERE _data_type IN ('SCENARIO', 'EVENT_MODULE')", Map.of(), Purpose.ADMIN)
+                .forEach(r -> assertNull(bodies.put(String.valueOf(r.get("_alert_cd")), r), "경보 ID 가 두 행: " + r.get("_alert_cd")));
+        assertEquals(alerts.size(), bodies.size(), "ClickHouse 경보 수");
+        for (Map<String, Object> a : alerts) {
+            Map<String, Object> b = bodies.get(Db.str(a, "alert_id"));
+            assertTrue(b != null, "본문 없음: " + a.get("alert_id"));
+            assertEquals("scenario".equals(a.get("source_type")) ? "SCENARIO" : "EVENT_MODULE", b.get("_data_type"));
+            assertEquals(Db.str(a, "severity").toUpperCase(), b.get("risk"));
+            assertEquals(Db.str(a, "org_id"), b.get("org"));
+            assertEquals(Db.str(a, "source_id"), b.get("src"));
+            assertEquals(Db.lng(a, "ch_window_ms"), ((Number) b.get("window_ms")).longValue());
+            assertFalse(String.valueOf(b.get("attack")).isBlank());
+            assertTrue(((Number) b.get("count")).longValue() >= 1);
+            assertTrue(String.valueOf(b.get("event_sdt")).compareTo(String.valueOf(b.get("event_edt"))) <= 0);
+            if ("host".equals(a.get("entity_type"))) {
+                assertTrue(a.get("entity").equals(b.get("s")) || a.get("entity").equals(b.get("d")), "대상 IP 칸: " + b);
+            }
+        }
     }
 
     /** 지정 대응방책(D3FEND) = 경보 노드의 d3fend + 경로에서 성립한 룰의 d3fend. 이름·전술·버전을 경보에 함께 저장하고 단계가 늘면 누적한다. */

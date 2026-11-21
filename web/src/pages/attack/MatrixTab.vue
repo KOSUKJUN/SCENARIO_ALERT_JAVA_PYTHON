@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 탐지 커버리지 매트릭스: 전술(열) × 기법. 기법(또는 하위 기법)을 단 단일룰·순서도가 있으면 탐지됨으로 칠한다.
+// 탐지 커버리지 매트릭스: 전술(열) × 기법. 기법(또는 하위 기법)을 단 이벤트 탐지모듈·시나리오가 있으면 탐지됨으로 칠한다.
 import { computed, ref } from 'vue';
 import { api } from '../../api';
 import { useAsync } from '../../composables';
@@ -45,7 +45,7 @@ const notFound = computed(() => {
       </span>
     </div>
     <p class="muted small">
-      칸의 숫자: 단일룰 / 순서도 / 최근 30일 경보. 하위 기법의 매핑도 상위 기법 칸에 합산합니다. 칸을 누르면 상세를 봅니다.
+      칸의 숫자: 이벤트 탐지모듈 / 시나리오 / 최근 30일 경보. 하위 기법의 매핑도 상위 기법 칸에 합산합니다. 칸을 누르면 상세를 봅니다.
     </p>
     <LoadingBox v-if="m.loading.value" />
     <EmptyBox v-else-if="notFound">ATT&amp;CK 데이터가 없습니다. "버전 관리" 탭에서 번들을 가져오세요.</EmptyBox>

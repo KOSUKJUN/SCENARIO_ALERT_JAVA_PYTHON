@@ -667,7 +667,7 @@ public class AttackService {
             via.forEach((id, how) -> listOf(out, id, "scenarios").add(Json.obj("id", Db.str(s, "scenario_id"), "name", Db.str(s, "name"),
                     "status", Db.str(s, "status"), "via", how)));
         }
-        for (Map<String, Object> a : db.rows("SELECT attack FROM alerts WHERE attack IS NOT NULL AND first_seen >= :since",
+        for (Map<String, Object> a : db.rows("SELECT attack FROM alert_state WHERE attack IS NOT NULL AND created_at >= :since",
                 p("since", Kst.now().minusDays(30)))) {
             for (Object it : Json.asList(Json.load(Db.str(a, "attack")))) {
                 Object id = Json.asMap(it).get("id");

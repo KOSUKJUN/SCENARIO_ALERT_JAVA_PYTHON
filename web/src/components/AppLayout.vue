@@ -12,7 +12,6 @@ const gnb = [{ label: '보안관제', children: [{ to: '/scenarios', label: '시
 const links = computed(() => {
   const l = [
     { to: '/', label: '현황', id: 'dashboard' },
-    { to: '/single-rules', label: '단일룰', id: 'rules' },
     { to: '/scenarios', label: '시나리오 분석', id: 'scenarios' },
     { to: '/alerts', label: '경보', id: 'alerts' },
     { to: '/attack', label: 'ATT&CK', id: 'attack' },

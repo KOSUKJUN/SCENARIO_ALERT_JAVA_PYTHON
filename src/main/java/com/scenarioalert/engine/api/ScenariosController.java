@@ -92,18 +92,29 @@ public class ScenariosController {
         return m;
     }
 
+    /** 화면 분류용 그룹 (V6, 그래프 JSON 밖) 을 요약에 더한다. */
+    private Map<String, Object> withGroup(Map<String, Object> m) {
+        Map<String, Object> r = db.row("SELECT group_id FROM scenarios WHERE scenario_id=:s", p("s", m.get("scenario_id")));
+        m.put("group_id", r == null ? null : r.get("group_id"));
+        return m;
+    }
+
     @GetMapping("/scenarios")
     @RequireRole("viewer")
     public List<Map<String, Object>> list() {
         return db.tx(() -> {
             List<ScenarioRecord> scs = repo.listScenarios();
             Map<String, Long> counts = new HashMap<>();
-            db.rows("SELECT source_id, COUNT(*) AS n FROM alerts WHERE source_type='scenario' AND created_at >= NOW() - "
+            db.rows("SELECT source_id, COUNT(*) AS n FROM alert_state WHERE source_type='scenario' AND created_at >= NOW() - "
                     + "INTERVAL 1 DAY GROUP BY source_id").forEach(r -> counts.put(Db.str(r, "source_id"), Db.lng(r, "n")));
+            // 화면 분류용 그룹 (그래프 JSON 밖, V6)
+            Map<String, Object> groups = new HashMap<>();
+            db.rows("SELECT scenario_id, group_id FROM scenarios").forEach(r -> groups.put(Db.str(r, "scenario_id"), r.get("group_id")));
             List<Map<String, Object>> out = new ArrayList<>();
             for (ScenarioRecord s : scs) {
                 Map<String, Object> m = summary(s);
                 m.put("alerts_24h", counts.getOrDefault(s.scenarioId(), 0L));
+                m.put("group_id", groups.get(s.scenarioId()));
                 out.add(m);
             }
             return out;
@@ -116,7 +127,7 @@ public class ScenariosController {
     public Map<String, Object> create(@RequestBody Map<String, Object> body, User user) {
         Repo.SavedScenario s = db.tx(() -> repo.saveScenario(Body.map(body, "graph"), user.username(),
                 Body.optStr(body, "change_note"), true, null));
-        return Json.obj("scenario", summary(s.scenario()), "graph", s.scenario().graph(),
+        return Json.obj("scenario", withGroup(summary(s.scenario())), "graph", s.scenario().graph(),
                 "warnings", s.validation().warningMaps());
     }
 
@@ -182,7 +193,7 @@ public class ScenariosController {
             ScenarioRecord s = repo.getScenario(sid);
             Map<String, Object> g = new LinkedHashMap<>(s.graph());
             g.put("status", s.status());
-            return Json.obj("scenario", summary(s), "graph", g, "operation", lifecycle.operationStats("scenario", sid),
+            return Json.obj("scenario", withGroup(summary(s)), "graph", g, "operation", lifecycle.operationStats("scenario", sid),
                     "warnings", repo.checkGraph(s.graph()).warningMaps());
         });
     }
@@ -193,7 +204,7 @@ public class ScenariosController {
         Map<String, Object> g = new LinkedHashMap<>(Body.map(body, "graph"));
         g.put("id", sid);
         Repo.SavedScenario s = db.tx(() -> repo.saveScenario(g, user.username(), Body.optStr(body, "change_note"), false, null));
-        return Json.obj("scenario", summary(s.scenario()), "graph", s.scenario().graph(),
+        return Json.obj("scenario", withGroup(summary(s.scenario())), "graph", s.scenario().graph(),
                 "warnings", s.validation().warningMaps());
     }
 
@@ -207,7 +218,7 @@ public class ScenariosController {
                 throw new ApiException(403, "active 전환은 관리자만 할 수 있습니다");
             }
             lifecycle.changeScenarioStatus(sid, target, user.username(), false);
-            return Json.obj("scenario", summary(repo.getScenario(sid)));
+            return Json.obj("scenario", withGroup(summary(repo.getScenario(sid))));
         });
     }
 

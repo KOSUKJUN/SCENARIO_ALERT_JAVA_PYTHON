@@ -422,7 +422,7 @@ public final class GraphValidator {
                     }
                 }
                 if (ref == null) {
-                    res.err("node", hid, "참조한 단일룰이 없습니다: " + rid);
+                    res.err("node", hid, "참조한 이벤트 탐지모듈이 없습니다: " + rid);
                     continue;
                 }
                 if (etype instanceof String et && !ref.entityType().equals(et)) {

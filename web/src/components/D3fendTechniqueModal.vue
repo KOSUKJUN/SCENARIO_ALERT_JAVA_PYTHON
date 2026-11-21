@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // D3FEND 방어 기법 상세 (내부 사본): 전술·상위 기법, 정의, 설명(KB), 이 기법이 막는 ATT&CK 기법(디지털 아티팩트 근거),
-// 연결된 ATT&CK 완화(M), 이 기법을 대응방책으로 지정한 단일룰·순서도.
+// 연결된 ATT&CK 완화(M), 이 기법을 대응방책으로 지정한 이벤트 탐지모듈·시나리오.
 import { ref, watch } from 'vue';
 import { api, enc } from '../api';
 import { d3fendText, tacticLabel } from '../d3fend';
@@ -40,11 +40,11 @@ const viaText = (v: { def_rel: string | null; def_artifact: string | null; off_r
 
       <section class="d3-sec">
         <h4>이 시스템의 지정</h4>
-        <p v-if="!t.data.value.designated_by.length" class="muted small" data-testid="d3fend-undesignated">이 기법을 대응방책으로 지정한 단일룰·순서도가 없습니다.</p>
+        <p v-if="!t.data.value.designated_by.length" class="muted small" data-testid="d3fend-undesignated">이 기법을 대응방책으로 지정한 이벤트 탐지모듈·시나리오가 없습니다.</p>
         <ul class="plain">
           <li v-for="r in t.data.value.designated_by" :key="`${r.kind}${r.id}${r.detail}`">
-            {{ r.kind === 'rule' ? '단일룰' : '순서도' }}
-            <RouterLink :to="r.kind === 'rule' ? `/single-rules/${r.id}` : `/scenarios/${r.id}`" @click="emit('close')">{{ r.id }}</RouterLink>
+            {{ r.kind === 'rule' ? '이벤트 탐지모듈' : '시나리오' }}
+            <RouterLink :to="r.kind === 'rule' ? `/scenarios/detections/${r.id}` : `/scenarios/${r.id}`" @click="emit('close')">{{ r.id }}</RouterLink>
             {{ r.name }} <StatusBadge :status="r.status" /> <span class="muted small">{{ r.detail ?? '' }}</span>
           </li>
         </ul>

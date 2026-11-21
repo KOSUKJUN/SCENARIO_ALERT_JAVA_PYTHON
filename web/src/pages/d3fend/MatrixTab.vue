@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// D3FEND 매트릭스: 전술(열) × 방어 기법(상위 아래 하위를 들여 씀). 룰·순서도가 대응방책으로 지정한 기법을 칠한다.
+// D3FEND 매트릭스: 전술(열) × 방어 기법(상위 아래 하위를 들여 씀). 이벤트 탐지모듈·시나리오가 대응방책으로 지정한 기법을 칠한다.
 import { computed, ref } from 'vue';
 import { api } from '../../api';
 import { useAsync } from '../../composables';
@@ -42,7 +42,7 @@ const notFound = computed(() => (m.error.value as { status?: number } | null)?.s
       </span>
     </div>
     <p class="muted small">
-      칸의 숫자: 대응하는 ATT&amp;CK 기법 수 / 이 기법을 지정한 단일룰·순서도 경보 노드 수. 노란 테두리 열은 사고 대응 전술(격리·퇴출·복구)입니다.
+      칸의 숫자: 대응하는 ATT&amp;CK 기법 수 / 이 기법을 지정한 이벤트 탐지모듈·시나리오 경보 노드 수. 노란 테두리 열은 사고 대응 전술(격리·퇴출·복구)입니다.
     </p>
     <LoadingBox v-if="m.loading.value" />
     <EmptyBox v-else-if="notFound">D3FEND 데이터가 없습니다. "버전 관리" 탭에서 릴리스를 가져오세요.</EmptyBox>

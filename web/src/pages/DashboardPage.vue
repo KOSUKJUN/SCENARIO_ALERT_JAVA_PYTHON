@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 현황: 룰·순서도별 경보 수, 정탐률, 실행 시간, 실패한 실행, 전달 실패. 정탐률 20% 미만은 "조정 필요".
+// 현황: 이벤트 탐지모듈·시나리오별 경보 수, 정탐률, 실행 시간, 실패한 실행, 전달 실패. 정탐률 20% 미만은 "조정 필요".
 import { computed, ref } from 'vue';
 import { api } from '../api';
 import { showIncident } from '../auth';
@@ -56,7 +56,7 @@ const activeRules = computed(() => (m.data.value?.rules ?? []).filter((r) => r.s
         <div class="stat"><div class="stat-v" :class="{ bad: totals.failing }">{{ totals.failing }}</div><div class="stat-l">연속 실패 룰</div></div>
       </div>
 
-      <CardBox title="단일룰 (실행 중)">
+      <CardBox title="이벤트 탐지모듈 (실행 중)">
         <div class="table-wrap">
           <table class="table compact" data-testid="dashboard-rules">
             <thead>
@@ -68,7 +68,7 @@ const activeRules = computed(() => (m.data.value?.rules ?? []).filter((r) => r.s
             <tbody>
               <tr v-for="r in activeRules" :key="r.rule_id" :class="{ 'row-warn': r.warning || (showIncident() && r.needs_tuning) }">
                 <td>
-                  <RouterLink :to="`/single-rules/${r.rule_id}`">{{ r.rule_id }}</RouterLink>
+                  <RouterLink :to="`/scenarios/detections/${r.rule_id}`">{{ r.rule_id }}</RouterLink>
                   <div class="muted small">{{ r.name }}</div>
                 </td>
                 <td><StatusBadge :status="r.status" /></td>
@@ -89,15 +89,15 @@ const activeRules = computed(() => (m.data.value?.rules ?? []).filter((r) => r.s
               </tr>
             </tbody>
           </table>
-          <EmptyBox v-if="!activeRules.length">실행 중인 단일룰이 없습니다</EmptyBox>
+          <EmptyBox v-if="!activeRules.length">실행 중인 이벤트 탐지모듈이 없습니다</EmptyBox>
         </div>
       </CardBox>
 
-      <CardBox title="순서도">
+      <CardBox title="시나리오">
         <div class="table-wrap">
           <table class="table compact" data-testid="dashboard-scenarios">
             <thead>
-              <tr><th>순서도</th><th>상태</th><th class="num">경보</th><template v-if="showIncident()"><th class="num">판정</th><th>정탐률</th><th class="num">전달 실패</th><th>오탐 상위</th></template></tr>
+              <tr><th>시나리오</th><th>상태</th><th class="num">경보</th><template v-if="showIncident()"><th class="num">판정</th><th>정탐률</th><th class="num">전달 실패</th><th>오탐 상위</th></template></tr>
             </thead>
             <tbody>
               <tr v-for="s in m.data.value.scenarios" :key="s.scenario_id" :class="{ 'row-warn': showIncident() && s.needs_tuning }">
@@ -123,7 +123,7 @@ const activeRules = computed(() => (m.data.value?.rules ?? []).filter((r) => r.s
             <tbody>
               <tr v-for="(f, i) in m.data.value.failed_runs" :key="i">
                 <td>{{ fmtTime(f.started_at) }}</td>
-                <td><RouterLink :to="`/single-rules/${f.rule_id}`">{{ f.rule_id }}</RouterLink></td>
+                <td><RouterLink :to="`/scenarios/detections/${f.rule_id}`">{{ f.rule_id }}</RouterLink></td>
                 <td>{{ fmtTime(f.win_to) }}</td>
                 <td class="small err-text">{{ f.error }}</td>
               </tr>

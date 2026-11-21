@@ -17,7 +17,7 @@ function pick(id: string, checked: boolean) {
 </script>
 <template>
   <div class="rule-picker">
-    <input v-model="q" placeholder="룰 검색" />
+    <input v-model="q" placeholder="이벤트 탐지모듈 검색" />
     <div class="rule-picker-list" data-testid="prop-rule-picker">
       <label v-for="u in unknown" :key="u" class="check warn-text">
         <input :type="multi ? 'checkbox' : 'radio'" checked :disabled="disabled" @change="emit('change', selected.filter((x) => x !== u))" />
@@ -34,7 +34,7 @@ function pick(id: string, checked: boolean) {
         />
         <span>{{ r.rule_id }} <span class="muted small">{{ r.name }}</span></span>
       </label>
-      <span v-if="!shown.length" class="muted small">해당 룰이 없습니다</span>
+      <span v-if="!shown.length" class="muted small">해당 이벤트 탐지모듈이 없습니다</span>
     </div>
   </div>
 </template>

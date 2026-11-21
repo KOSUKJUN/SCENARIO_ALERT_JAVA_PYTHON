@@ -75,7 +75,7 @@ async function run(key: string, fn: () => Promise<unknown>) {
           </tr>
         </tbody>
       </table>
-      <p class="muted small">주입 후 1~2분 안에 단일룰 히트와 경보가 생깁니다 (평가 주기 + 15초 지연).</p>
+      <p class="muted small">주입 후 1~2분 안에 이벤트 탐지모듈 히트와 경보가 생깁니다 (평가 주기 + 15초 지연).</p>
     </CardBox>
     <CardBox v-if="result" title="결과"><pre class="code small">{{ result }}</pre></CardBox>
     <CardBox v-if="cat.data.value" title="최근 30일 이벤트 (유형별)">

@@ -208,14 +208,14 @@ const mb = (n: number | null) => (n == null ? '없음' : `${(n / 1024 / 1024).to
               <td class="err-text">없음</td>
               <td class="small">
                 <div v-for="r in i.refs" :key="`${r.kind}${r.id}${r.detail}`">
-                  <RouterLink :to="r.kind === 'rule' ? `/single-rules/${r.id}` : `/scenarios/${r.id}`">{{ r.id }}</RouterLink>
+                  <RouterLink :to="r.kind === 'rule' ? `/scenarios/detections/${r.id}` : `/scenarios/${r.id}`">{{ r.id }}</RouterLink>
                   {{ r.name }} <StatusBadge :status="r.status" /> <span class="muted">{{ r.detail ?? '' }}</span>
                 </div>
               </td>
             </tr>
           </tbody>
         </table>
-        <p v-if="diff.impact.length" class="warn-text small">활성화해도 탐지·경보는 그대로 동작합니다. 위 룰·순서도는 다음에 저장할 때 대응 기법을 고쳐야 합니다.</p>
+        <p v-if="diff.impact.length" class="warn-text small">활성화해도 탐지·경보는 그대로 동작합니다. 위 이벤트 탐지모듈·시나리오는 다음에 저장할 때 대응 기법을 고쳐야 합니다.</p>
         <template v-for="[k, label] in DIFF_KEYS" :key="k">
           <details v-if="Array.isArray(diff[k]) && (diff[k] as unknown[]).length">
             <summary>{{ label }} ({{ (diff[k] as unknown[]).length }})</summary>

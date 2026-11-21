@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 기관별 자산과 태그. 태그는 순서도 자산 확인 노드(asset)와 단일룰 has_tag 조건에 쓰인다.
+// 기관별 자산과 태그. 태그는 순서도 자산 확인 노드(asset)와 이벤트 탐지모듈 has_tag 조건에 쓰인다.
 import { computed, ref, watch } from 'vue';
 import { api, enc } from '../../api';
 import { has } from '../../auth';

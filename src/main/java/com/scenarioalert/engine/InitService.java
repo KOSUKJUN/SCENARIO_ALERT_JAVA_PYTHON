@@ -1,5 +1,6 @@
 package com.scenarioalert.engine;
 
+import com.scenarioalert.engine.alerting.AlertStore;
 import com.scenarioalert.engine.attack.AttackService;
 import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.ch.ClickHouse;
@@ -46,9 +47,11 @@ public class InitService {
     private final AppProperties props;
     private final AttackService attack;
     private final D3fendService d3fend;
+    private final AlertStore alertStore;
 
     public InitService(Db db, ClickHouse ch, Repo repo, SampleDataService samples, AppProperties props, AttackService attack,
-                       D3fendService d3fend) {
+                       D3fendService d3fend, AlertStore alertStore) {
+        this.alertStore = alertStore;
         this.attack = attack;
         this.d3fend = d3fend;
         this.db = db;
@@ -129,8 +132,10 @@ public class InitService {
     }
 
     /** 원본 이벤트 테이블 (운영과 같은 이름·구조. 조회·적재 입구는 Distributed, 실제 데이터는 store). */
-    public static final String SOURCE = "default.log_integrated_success_all";
-    public static final String SOURCE_STORE = "default.log_integrated_success_store";
+    /** 원본 로그 (대상 ClickHouse 의 codlog.log_integrated_success_all, MergeTree 하나. 적재는 수집 파이프라인) */
+    public static final String SOURCE = "codlog.log_integrated_success_all";
+    /** 테스트 적재 대상 (원본과 같은 테이블) */
+    public static final String SOURCE_STORE = SOURCE;
 
     public Map<String, Object> loadBuiltin(String status) {
         int[] n = {0, 0};
@@ -175,13 +180,23 @@ public class InitService {
         log.info("sample loaded: {}", Json.dump(info));
     }
 
-    /** 테스트 데이터 초기화: 이벤트·히트·경보·실행 이력을 지운다 (설정·룰은 유지). 개발 환경 전용. */
+    /**
+     * 테스트 데이터 초기화: 이벤트·히트·경보·실행 이력을 지운다 (설정·룰은 유지). 개발 환경 전용.
+     * 원본 로그는 CH_MANAGE_SOURCE=true (사본을 이 시스템이 관리) 일 때만 비운다. 경보 테이블은 이 시스템이 넣은 행만 지운다.
+     */
     public void resetData() {
-        for (String t : List.of(SOURCE_STORE, "detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen")) {
+        List<String> tables = new ArrayList<>(List.of("detect.rule_hits", "detect.rule_hits_backtest", "detect.peer_first_seen"));
+        if (props.init().manageSource()) {
+            tables.add(0, SOURCE_STORE);
+        } else {
+            log.warn("CH_MANAGE_SOURCE=false: 원본 로그 테이블({})은 비우지 않는다", SOURCE);
+        }
+        for (String t : tables) {
             ch.command("TRUNCATE TABLE IF EXISTS " + t, Map.of(), Purpose.ADMIN);
         }
+        alertStore.deleteAllOurs();
         db.txRun(() -> {
-            for (String t : List.of("alerts", "rule_runs", "backtest_jobs", "known_incidents")) {
+            for (String t : List.of("alert_state", "rule_runs", "backtest_jobs", "known_incidents")) {
                 db.execute("DELETE FROM " + t, Map.of());
             }
             db.execute("UPDATE single_rules SET last_evaluated_to=NULL, next_run_at=NULL, consecutive_failures=0", Map.of());
@@ -194,13 +209,15 @@ public class InitService {
 
     public void init() {
         waitReady(120);
-        applyClickHouse(true);
+        applyClickHouse(props.init().manageSource());
         samples.seedReference();
         // ATT&CK 번들(ATTACK_DIR)을 기본 룰보다 먼저 가져온다: 룰의 기법 참조를 활성 버전으로 검사한다
         log.info("ATT&CK: {}", attack.importDir("system"));
         // D3FEND 릴리스(D3FEND_DIR/<버전>/)도 기본 룰보다 먼저: 룰·경보 노드의 지정 대응방책을 활성 버전으로 검사한다
         log.info("D3FEND: {}", d3fend.importDir("system"));
         log.info("builtin loaded: {}", loadBuiltin(props.init().builtinStatus()));
+        // 이전 MariaDB 경보(Flyway V7 이 남긴 alerts_legacy) 를 ClickHouse 경보 테이블로 옮긴다
+        log.info("legacy alerts moved to {}: {}", AlertStore.TABLE, alertStore.migrateLegacy(Kst.now()));
         ch.reloadDictionaries();
         if (props.init().seedSample()) {
             List<Map<String, Object>> r = ch.query("SELECT count() AS n FROM " + SOURCE, Map.of(), Purpose.ADMIN);

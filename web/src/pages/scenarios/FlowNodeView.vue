@@ -1,7 +1,10 @@
 <script setup lang="ts">
-// 순서도 노드 모양: 시작=둥근 알약, 룰=사각형, check/asset=마름모(예: 오른쪽, 아니오: 아래), and/or=작은 원, 경보=등급 색 사각형.
+// 순서도 노드 모양: 시작=둥근 알약, 이벤트 탐지모듈=사각형, check/asset=마름모(예: 오른쪽, 아니오: 아래), and/or=작은 원, 경보=등급 색 사각형.
+// 편집기에서 선택하면 위에 작은 도구 막대(편집·복제·삭제)가 나온다.
 import { computed } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
+import ScenarioIcon from '../../components/ScenarioIcon.vue';
+import ModuleIcon from '../../components/ModuleIcon.vue';
 import type { NodeSim } from '../../types';
 import { SEVERITY_LABEL, fmtDuration } from '../../util';
 import type { FlowNodeData } from './graph';
@@ -15,7 +18,9 @@ const props = defineProps<{
   sim?: NodeSim;
   highlight?: boolean;
   ruleName?: string;
+  editable?: boolean;
 }>();
+const emit = defineEmits<{ action: [kind: 'edit' | 'duplicate' | 'delete'] }>();
 
 const SIM_REASON: Record<string, string> = { no_hit: '히트 없음', timeout: '시간 초과', branch_missing: '가지 미성립' };
 const g = computed(() => props.data.g);
@@ -55,15 +60,21 @@ const tags = computed(() => g.value.tags ?? []);
 
 <template>
   <div :class="cls" :data-testid="t === 'start' ? 'node-start' : `node-${id}`" :data-node-type="t">
+    <div v-if="editable && selected && t !== 'start'" class="node-toolbar nodrag" data-testid="node-toolbar">
+      <button v-if="t === 'rule' && g.rule_id" class="tb" title="이 이벤트 탐지모듈 편집" data-testid="node-edit" @click.stop="emit('action', 'edit')">편집</button>
+      <button class="tb" title="복제" data-testid="node-duplicate" @click.stop="emit('action', 'duplicate')">복제</button>
+      <button class="tb danger" title="삭제 (Delete)" data-testid="node-delete" @click.stop="emit('action', 'delete')">삭제</button>
+    </div>
+
     <template v-if="t === 'start'">
-      시작
+      <ScenarioIcon class="fnode-ico" /> 시작
       <Handle type="source" :position="Position.Right" :data-testid="`handle-${id}-out`" />
     </template>
 
     <template v-else-if="t === 'rule'">
       <Handle type="target" :position="Position.Left" :data-testid="`handle-${id}-in`" />
-      <div class="fnode-kind">단일룰 <span class="nid">{{ id }}</span></div>
-      <div class="fnode-title">{{ g.rule_id || '(룰 선택)' }}</div>
+      <div class="fnode-kind"><ModuleIcon class="fnode-ico" /> 이벤트 탐지모듈 <span class="nid">{{ id }}</span></div>
+      <div class="fnode-title">{{ g.rule_id || '(이벤트 탐지모듈 선택)' }}</div>
       <div class="fnode-sub">{{ g.label || ruleName || '' }}</div>
       <Handle type="source" :position="Position.Right" :data-testid="`handle-${id}-out`" />
     </template>
@@ -71,9 +82,9 @@ const tags = computed(() => g.value.tags ?? []);
     <template v-else-if="isDiamond">
       <svg class="diamond-shape" viewBox="0 0 160 100" preserveAspectRatio="none"><polygon points="80,2 158,50 80,98 2,50" /></svg>
       <div class="diamond-content">
-        <div class="fnode-kind">{{ t === 'check' ? '룰 확인' : '자산 태그' }} <span class="nid">{{ id }}</span></div>
+        <div class="fnode-kind">{{ t === 'check' ? '탐지 확인' : '자산 태그' }} <span class="nid">{{ id }}</span></div>
         <template v-if="t === 'check'">
-          <div class="fnode-title small" :title="ruleIds.join(', ')">{{ g.label || (ruleIds.length ? ruleIds.join(', ') : '(룰 선택)') }}</div>
+          <div class="fnode-title small" :title="ruleIds.join(', ')">{{ g.label || (ruleIds.length ? ruleIds.join(', ') : '(이벤트 탐지모듈 선택)') }}</div>
           <div class="fnode-sub">±{{ fmtDuration(g.lookaround) || '?' }}</div>
         </template>
         <div v-else class="fnode-title small" :title="tags.join(', ')">{{ g.label || (tags.length ? tags.join(', ') : '(태그 지정)') }}</div>

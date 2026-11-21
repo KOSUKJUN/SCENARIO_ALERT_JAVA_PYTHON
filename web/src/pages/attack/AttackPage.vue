@@ -20,7 +20,7 @@ const tabs = [
   <div class="page">
     <div class="page-head">
       <h2>MITRE ATT&amp;CK</h2>
-      <span class="muted small">폐쇄망 내부 사본 · 룰·순서도의 기법 매핑과 경보의 기법 정보에 쓴다</span>
+      <span class="muted small">폐쇄망 내부 사본 · 이벤트 탐지모듈·시나리오의 기법 매핑과 경보의 기법 정보에 쓴다</span>
     </div>
     <TabBar :model-value="active" :tabs="tabs" @update:model-value="(k) => router.push(`/attack/${k}`)" />
     <div class="tab-body">

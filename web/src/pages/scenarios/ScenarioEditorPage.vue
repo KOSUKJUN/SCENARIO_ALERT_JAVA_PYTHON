@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// 순서도 편집기: 왼쪽 단일룰·노드 목록, 가운데 Vue Flow 캔버스, 오른쪽 속성. 서버와는 그래프 JSON(설계안 5장)만 주고받는다.
-import { computed, nextTick, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+// 순서도 편집기: 왼쪽 이벤트 탐지모듈·노드 목록, 가운데 Vue Flow 캔버스, 오른쪽 속성. 서버와는 그래프 JSON(설계안 5장)만 주고받는다.
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { ConnectionLineType, VueFlow, useVueFlow, type Connection, type GraphEdge, type GraphNode } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
@@ -24,12 +24,16 @@ import type {
   RuleSummary,
   ScenarioDetail,
   ScenarioSaveResponse,
+  ScenarioGroupList,
   ScenarioSummary,
   SimulateResponse,
   Status,
   ValidateResponse,
 } from '../../types';
 import { downloadJson, fmtSec, fmtTime } from '../../util';
+import ScenarioIcon from '../../components/ScenarioIcon.vue';
+import RuleEditorPage from '../single-rules/RuleEditorPage.vue';
+import FlowEdgeView from './FlowEdgeView.vue';
 import FlowNodeView from './FlowNodeView.vue';
 import PaletteBox from './PaletteBox.vue';
 import PropertiesPanel from './PropertiesPanel.vue';
@@ -44,6 +48,7 @@ import {
   edgeId,
   gtype,
   nextNodeId,
+  layoutGraph,
   styleEdge,
   toFlow,
   toGraph,
@@ -57,6 +62,23 @@ import {
 
 const props = defineProps<{ scenarioId?: string }>();
 const router = useRouter();
+const route = useRoute();
+
+// 화면 분류용 그룹 (그래프 JSON 밖이라 바꿔도 버전이 올라가지 않는다). 새 시나리오는 목록에서 고른 그룹(?group=)으로 시작
+const groupsQ = useAsync(() => api.get<ScenarioGroupList>('/scenario-groups'));
+const groupSel = ref<string>(typeof route.query.group === 'string' && /^[0-9]+$/.test(route.query.group) ? route.query.group : '');
+async function assignGroup(sid: string) {
+  await api.put('/scenario-groups/assign', { group_id: groupSel.value ? Number(groupSel.value) : null, scenario_ids: [sid] });
+}
+async function onGroupChange() {
+  if (isNew.value || !props.scenarioId) return; // 새 시나리오는 저장할 때 넣는다
+  try {
+    await assignGroup(props.scenarioId);
+    message.value = { kind: 'ok', text: '그룹을 바꿨습니다 (순서도 버전은 그대로)' };
+  } catch (e) {
+    actionError.value = e;
+  }
+}
 const isNew = computed(() => !props.scenarioId);
 const readOnly = computed(() => !has('author'));
 const metaF = useMeta();
@@ -97,13 +119,17 @@ function loadGraph(g: Graph, markAsDirty = false) {
   quiet = true;
   const f = toFlow(g);
   meta.value = f.meta;
+  // 같은 ID 의 노드를 다시 넣을 때 Vue Flow 가 이전 노드에 붙은 화살표를 지우므로, 화살표는 노드가 바뀐 다음에 넣는다
+  vf.setEdges([]);
   vf.setNodes(f.nodes as unknown as GraphNode[]);
-  vf.setEdges(f.edges as unknown as GraphEdge[]);
   sim.value = null;
   void nextTick(() => {
-    quiet = false;
-    dirty.value = markAsDirty;
-    restyleEdges();
+    vf.setEdges(f.edges as unknown as GraphEdge[]);
+    void nextTick(() => {
+      quiet = false;
+      dirty.value = markAsDirty;
+      restyleEdges();
+    });
   });
 }
 
@@ -121,6 +147,7 @@ if (isNew.value) {
     .then((d) => {
       loadGraph(withoutStatus(d.graph));
       summary.value = d.scenario;
+      groupSel.value = d.scenario.group_id != null ? String(d.scenario.group_id) : '';
       issues.value = d.warnings.map((w) => ({ ...w, level: 'warn' as const }));
     })
     .catch((e: unknown) => (loadError.value = e));
@@ -319,11 +346,128 @@ function deleteSelected() {
   markDirty();
 }
 
+/** 자동 정렬: 그래프를 다시 불러오지 않고 노드 위치만 옮긴다 (선택·화살표 유지). */
 function relayout() {
-  const g = currentGraph();
-  if (!g) return;
-  loadGraph({ ...g, nodes: g.nodes.map((n) => ({ ...n, pos: undefined })) }, true);
-  setTimeout(() => void vf.fitView({ padding: 0.2 }), 50);
+  if (readOnly.value) return;
+  const pos = layoutGraph(
+    fnodes.value.map((n) => ({ id: n.id, type: gtype(n) })),
+    fedges.value.map((e) => ({ from: e.source, to: e.target, branch: e.sourceHandle })),
+  );
+  for (const n of nodes.value) {
+    const p = pos[n.id];
+    if (p) n.position = { x: p.x, y: p.y };
+  }
+  markDirty();
+  setTimeout(() => void vf.fitView({ padding: 0.2, duration: 250 }), 30);
+}
+
+function fit() {
+  void vf.fitView({ padding: 0.2, duration: 250 });
+}
+
+/** 노드 도구 막대: 편집(이벤트 탐지모듈 옆 패널) / 복제 / 삭제 */
+function onNodeAction(id: string, kind: 'edit' | 'duplicate' | 'delete') {
+  const n = fnodes.value.find((x) => x.id === id);
+  if (!n) return;
+  if (kind === 'edit') {
+    if (n.data?.g.rule_id) openRuleEditor(n.data.g.rule_id);
+    return;
+  }
+  if (readOnly.value) return;
+  if (kind === 'delete') {
+    if (gtype(n) !== 'start') vf.removeNodes([id]);
+    markDirty();
+    return;
+  }
+  const type = gtype(n);
+  if (type === 'start') return;
+  const nid = nextNodeId(type, fnodes.value.map((x) => x.id));
+  const g = JSON.parse(JSON.stringify(n.data?.g ?? defaultProps(type))) as NodeProps_;
+  vf.addNodes([{ id: nid, type: FLOW_NODE_TYPE, position: { x: n.position.x + 30, y: n.position.y + 110 }, data: { g }, deletable: true }]);
+  markDirty();
+  void nextTick(() => selectOnly('node', nid));
+}
+
+vf.onNodeDoubleClick(({ node }) => {
+  const g = (node as unknown as FlowNode).data?.g;
+  if (g?.type === 'rule' && g.rule_id) openRuleEditor(g.rule_id);
+});
+
+function removeEdge(id: string) {
+  if (readOnly.value) return;
+  vf.removeEdges([id]);
+  markDirty();
+}
+
+// ---------- 이벤트 탐지모듈 옆 패널 (만들기·편집) ----------
+interface Drawer {
+  key: number;
+  ruleId?: string;
+  /** 새로 만든 탐지를 넣을 rule 노드 (없으면 새 노드를 만든다) */
+  forNode?: string;
+  created?: boolean;
+}
+const drawer = ref<Drawer | null>(null);
+const drawerDirty = ref(false);
+let drawerSeq = 0;
+
+function confirmLeaveDrawer(): boolean {
+  return !drawerDirty.value || window.confirm('이벤트 탐지모듈에 저장하지 않은 변경이 있습니다. 닫을까요?');
+}
+function openRuleEditor(ruleId: string) {
+  if (drawer.value && !confirmLeaveDrawer()) return;
+  drawerDirty.value = false;
+  drawer.value = { key: ++drawerSeq, ruleId };
+}
+function openNewRule(forNode?: string) {
+  if (readOnly.value) return;
+  if (drawer.value && !confirmLeaveDrawer()) return;
+  drawerDirty.value = false;
+  drawer.value = { key: ++drawerSeq, forNode };
+}
+function closeDrawer() {
+  if (!confirmLeaveDrawer()) return;
+  drawer.value = null;
+  drawerDirty.value = false;
+}
+function onRuleSaved(ruleId: string) {
+  rulesQ.reload();
+  const d = drawer.value;
+  if (!d) return;
+  if (!d.ruleId && !d.created) {
+    // 새로 만든 탐지: 고른 rule 노드에 넣거나, 새 노드로 추가
+    const target = d.forNode ? fnodes.value.find((n) => n.id === d.forNode) : undefined;
+    if (target?.data) {
+      target.data.g.rule_id = ruleId;
+      markDirty();
+    } else {
+      addAtCenter({ type: 'rule', rule_id: ruleId });
+    }
+    d.created = true;
+    message.value = { kind: 'ok', text: `이벤트 탐지모듈 ${ruleId} 를 만들어 순서도에 넣었습니다. 시나리오도 저장해야 반영됩니다.` };
+  } else {
+    message.value = { kind: 'ok', text: `이벤트 탐지모듈 ${ruleId} 를 저장했습니다.` };
+  }
+}
+function onWindowKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && drawer.value) closeDrawer();
+}
+window.addEventListener('keydown', onWindowKey);
+onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKey));
+
+const moreOpen = ref(false);
+
+const MINI_COLOR: Record<string, string> = {
+  start: '#6c7a89',
+  rule: '#0095ff',
+  check: '#f5b041',
+  asset: '#00d1b9',
+  and: '#8a91a2',
+  or: '#8a91a2',
+  alert: '#ff6b6b',
+};
+function miniColor(n: { data?: FlowNode['data'] }): string {
+  return MINI_COLOR[n.data?.g.type ?? 'rule'] ?? '#8a91a2';
 }
 
 // ---------- 서버 동작 ----------
@@ -412,6 +556,7 @@ async function save(note: string) {
     dirty.value = false;
     message.value = { kind: 'ok', text: `저장했습니다 (v${r.scenario.version})${r.warnings.length ? ` · 경고 ${r.warnings.length}건` : ''}` };
     saveOpen.value = false;
+    if (isNew.value && groupSel.value) await assignGroup(r.scenario.scenario_id);
     if (isNew.value) await router.replace(`/scenarios/${r.scenario.scenario_id}`);
   } catch (e) {
     saveOpen.value = false;
@@ -488,27 +633,47 @@ const tabs = computed(() => [
   <ErrorBox v-if="loadError" :error="loadError" />
   <LoadingBox v-else-if="!meta" />
   <div v-else class="page scenario-editor">
-    <div class="page-head">
-      <h2>
-        {{ isNew ? '새 순서도' : `순서도 ${scenarioId}` }}
-        <span v-if="dirty" class="dirty" data-testid="dirty">● 저장 안 됨</span>
-      </h2>
+    <RouterLink to="/scenarios" class="back-link" data-testid="scenario-back">← 시나리오 분석</RouterLink>
+    <div class="editor-head">
+      <div class="editor-title">
+        <h2>
+          <ScenarioIcon class="title-ico" :size="20" />
+          {{ meta.name || (isNew ? '새 시나리오' : scenarioId) }}
+          <span v-if="!isNew" class="item-id title-id">{{ scenarioId }}</span>
+          <span v-if="dirty" class="dirty" data-testid="dirty">● 저장 안 됨</span>
+        </h2>
+        <label class="group-pick small">
+          그룹
+          <select v-model="groupSel" :disabled="readOnly" data-testid="scenario-group" @change="onGroupChange">
+            <option value="">미분류</option>
+            <option v-for="g in groupsQ.data.value?.groups ?? []" :key="g.group_id" :value="String(g.group_id)">{{ g.name }}</option>
+          </select>
+        </label>
+        <div v-if="summary" class="subhead">
+          <StatusControl :current="summary.status" :change="changeStatus" :disabled="isNew" />
+          <span class="muted small">v{{ summary.version }} · 최대 기간 {{ fmtSec(summary.max_span_sec) }} · 수정 {{ fmtTime(summary.updated_at) }}</span>
+        </div>
+      </div>
       <div class="actions toolbar" data-testid="scenario-toolbar">
-        <RouterLink to="/scenarios" class="button">목록</RouterLink>
-        <button :disabled="!!busy || readOnly" data-testid="scenario-validate" @click="validate">{{ busy === 'validate' ? '검증 중…' : '검증' }}</button>
-        <button :disabled="!!busy || readOnly" data-testid="scenario-simulate" @click="simOpen = true">{{ busy === 'simulate' ? '시뮬레이션 중…' : '시뮬레이션' }}</button>
-        <button v-if="sim" data-testid="scenario-sim-clear" @click="sim = null">시뮬레이션 지우기</button>
-        <button :disabled="readOnly" data-testid="scenario-backtest" @click="focusBottom('backtest')">백테스트</button>
-        <button :disabled="isNew" data-testid="scenario-versions" @click="focusBottom('versions')">버전 이력</button>
-        <button data-testid="scenario-export" @click="exportJson">JSON 내보내기</button>
-        <button v-if="!readOnly" data-testid="scenario-import" @click="fileInput?.click()">JSON 가져오기</button>
+        <div class="btn-group">
+          <button :disabled="!!busy || readOnly" data-testid="scenario-validate" @click="validate">{{ busy === 'validate' ? '검증 중…' : '✓ 검증' }}</button>
+          <button :disabled="!!busy || readOnly" data-testid="scenario-simulate" @click="simOpen = true">{{ busy === 'simulate' ? '시뮬레이션 중…' : '▷ 시뮬레이션' }}</button>
+          <button v-if="sim" data-testid="scenario-sim-clear" title="시뮬레이션 표시 지우기" @click="sim = null">✕</button>
+        </div>
+        <div class="btn-group">
+          <button :disabled="readOnly" data-testid="scenario-backtest" @click="focusBottom('backtest')">백테스트</button>
+          <button :disabled="isNew" data-testid="scenario-versions" @click="focusBottom('versions')">버전 이력</button>
+        </div>
+        <div class="menu-wrap">
+          <button class="icon-btn" aria-label="더보기" data-testid="scenario-more" @click="moreOpen = !moreOpen">⋯</button>
+          <div v-if="moreOpen" class="menu" @click="moreOpen = false">
+            <button class="menu-item" data-testid="scenario-export" @click="exportJson">JSON 내보내기</button>
+            <button v-if="!readOnly" class="menu-item" data-testid="scenario-import" @click="fileInput?.click()">JSON 가져오기</button>
+          </div>
+        </div>
         <input ref="fileInput" type="file" accept=".json,application/json" hidden data-testid="scenario-import-file" @change="onFile" />
         <button v-if="!readOnly" class="primary" data-testid="scenario-save" @click="saveOpen = true">저장</button>
       </div>
-    </div>
-    <div v-if="summary" class="subhead">
-      <StatusControl :current="summary.status" :change="changeStatus" :disabled="isNew" />
-      <span class="muted small">v{{ summary.version }} · 최대 기간 {{ fmtSec(summary.max_span_sec) }} · 수정 {{ fmtTime(summary.updated_at) }}</span>
     </div>
     <NoticeBox v-if="message" :kind="message.kind">
       {{ message.text }} <button class="link small" @click="message = null">닫기</button>
@@ -516,7 +681,15 @@ const tabs = computed(() => [
     <ErrorBox :error="actionError" closable @close="actionError = null" />
 
     <div class="flow-layout">
-      <PaletteBox :rules="rulesForEntity" :loading="rulesQ.loading.value" :entity-type="meta.entity_type" :read-only="readOnly" :has-start="hasStart" @add="addAtCenter" />
+      <PaletteBox
+        :rules="rulesForEntity"
+        :loading="rulesQ.loading.value"
+        :entity-type="meta.entity_type"
+        :read-only="readOnly"
+        :has-start="hasStart"
+        @add="addAtCenter"
+        @create-rule="openNewRule()"
+      />
       <div ref="canvas" class="flow-canvas" data-testid="scenario-canvas" @drop="onDrop" @dragover="onDragOver">
         <VueFlow
           :id="flowId"
@@ -524,11 +697,12 @@ const tabs = computed(() => [
           :nodes-draggable="!readOnly"
           :nodes-connectable="!readOnly"
           :delete-key-code="readOnly ? null : ['Delete', 'Backspace']"
-          :connection-line-options="{ type: ConnectionLineType.SmoothStep }"
+          :connection-line-options="{ type: ConnectionLineType.SmoothStep, style: { stroke: '#0095ff', strokeWidth: 2 } }"
           :snap-to-grid="true"
-          :snap-grid="[10, 10]"
+          :snap-grid="[8, 8]"
           :min-zoom="0.2"
           :max-zoom="2"
+          :zoom-on-double-click="false"
           fit-view-on-init
         >
           <template #node-scn="p">
@@ -540,14 +714,26 @@ const tabs = computed(() => [
               :warnings="issueMaps.nodeWarn[p.id]"
               :sim="simMap[p.id]"
               :rule-name="ruleNames[p.data.g.rule_id ?? '']"
+              :editable="!readOnly"
+              @action="(k) => onNodeAction(p.id, k)"
             />
           </template>
-          <Background :gap="20" />
-          <Controls />
-          <MiniMap pannable zoomable />
+          <template #edge-scn="p">
+            <FlowEdgeView v-bind="p" :editable="!readOnly" @remove="removeEdge" />
+          </template>
+          <Background :gap="22" :size="1.2" pattern-color="#3a3f48" />
+          <Controls :show-interactive="false" position="bottom-left" />
+          <MiniMap pannable zoomable :node-color="miniColor" mask-color="rgba(10, 12, 16, 0.6)" />
         </VueFlow>
-        <button class="small relayout" :disabled="readOnly" title="시작점에서의 깊이로 다시 배치" @click="relayout">자동 정렬</button>
+        <div class="canvas-tools">
+          <button class="small" :disabled="readOnly" title="흐름 방향으로 노드를 다시 배치" @click="relayout">자동 정렬</button>
+          <button class="small" title="순서도 전체가 보이게" data-testid="scenario-fit" @click="fit">화면 맞춤</button>
+        </div>
         <div v-if="errorCount > 0" class="canvas-badge">오류 {{ errorCount }}건</div>
+        <div v-if="fnodes.length <= 1 && !readOnly" class="canvas-empty">
+          <strong>순서도를 만들어 보세요</strong>
+          <span>왼쪽에서 이벤트 탐지모듈을 끌어다 놓고, 시작 노드의 오른쪽 점을 끌어 잇습니다.</span>
+        </div>
       </div>
       <aside class="flow-props">
         <PropertiesPanel
@@ -568,6 +754,8 @@ const tabs = computed(() => [
           :rename="renameNode"
           @changed="markDirty(), restyleEdges()"
           @delete="deleteSelected"
+          @edit-rule="openRuleEditor"
+          @new-rule="openNewRule(selectedNode?.id)"
         />
         <datalist id="scn-dur"><option v-for="d in ['5m', '10m', '30m', '1h', '6h', '12h', '24h', '1d', '3d', '7d']" :key="d" :value="d" /></datalist>
       </aside>
@@ -587,7 +775,24 @@ const tabs = computed(() => [
       </CardBox>
     </div>
 
+    <!-- 이벤트 탐지모듈 옆 패널: 순서도를 떠나지 않고 만들고 고친다 -->
+    <Transition name="drawer">
+      <div v-if="drawer" class="drawer-backdrop" data-testid="rule-drawer-backdrop" @click.self="closeDrawer">
+        <aside class="drawer" data-testid="rule-drawer">
+          <RuleEditorPage
+            :key="drawer.key"
+            :rule-id="drawer.ruleId"
+            :entity-type="meta.entity_type"
+            embedded
+            @saved="onRuleSaved"
+            @close="closeDrawer"
+            @dirty="(v) => (drawerDirty = v)"
+          />
+        </aside>
+      </div>
+    </Transition>
+
     <SimulateModal v-if="simOpen" :busy="busy === 'simulate'" @close="simOpen = false" @run="simulate" />
-    <ChangeNoteModal v-if="saveOpen" :title="isNew ? '새 순서도 저장' : '새 버전으로 저장'" :busy="saving" @close="saveOpen = false" @submit="save" />
+    <ChangeNoteModal v-if="saveOpen" :title="isNew ? '새 시나리오 저장' : '새 버전으로 저장'" :busy="saving" @close="saveOpen = false" @submit="save" />
   </div>
 </template>

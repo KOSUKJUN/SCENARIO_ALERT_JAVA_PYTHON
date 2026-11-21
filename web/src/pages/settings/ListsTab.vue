@@ -47,7 +47,7 @@ async function act(fn: () => Promise<unknown>, ok: string, reloadLists = false) 
     msg.value = ok;
     detail.reload();
     if (reloadLists) lists.reload();
-    void loadMeta(true); // 단일룰 양식의 리스트 목록도 새로
+    void loadMeta(true); // 이벤트 탐지모듈 양식의 리스트 목록도 새로
   } catch (e) {
     err.value = e;
   } finally {

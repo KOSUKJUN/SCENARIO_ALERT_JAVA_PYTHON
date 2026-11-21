@@ -1,5 +1,5 @@
 -- 탐지 전용 뷰. 단일룰은 이 뷰의 컬럼명만 참조한다. 원본 구조가 바뀌면 이 파일만 고친다.
--- 안쪽 SELECT: 운영 원본(default.log_integrated_success_all, ClickHouse 25.3)을 탐지 컬럼 이름으로 펼친다.
+-- 안쪽 SELECT: 운영 원본(codlog.log_integrated_success_all, ClickHouse 25.3)을 탐지 컬럼 이름으로 펼친다.
 --   _event_cd → event_id, _collect_time → mgr_time(평가 시간축), _data_type → data_tp,
 --   _asset_id(로그 수집원) → 기관: MariaDB log_sources 매핑(dict_log_sources). 매핑 없으면 'UNASSIGNED'.
 --   fields 는 JSON 타입: ifNull(toString(fields.키), '') 로 읽는다 (값이 문자열·숫자·없음 어느 것이어도 문자열).
@@ -90,5 +90,5 @@ FROM
         ifNull(toString(fields.uri), '')                 AS uri,
         ifNull(toString(fields.url_method), '')          AS url_method,
         ifNull(toString(fields.payload), '')             AS payload
-    FROM default.log_integrated_success_all
+    FROM codlog.log_integrated_success_all
 );

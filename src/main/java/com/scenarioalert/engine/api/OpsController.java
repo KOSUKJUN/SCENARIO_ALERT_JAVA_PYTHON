@@ -175,7 +175,7 @@ public class OpsController {
             Map<String, Map<String, Object>> am = new HashMap<>();
             db.rows("SELECT source_type, source_id, COUNT(*) AS alerts, SUM(verdict='true_positive') AS tp, "
                     + "SUM(verdict='false_positive') AS fp, SUM(verdict='benign') AS benign, SUM(verdict IS NOT NULL) AS judged, "
-                    + "SUM(delivery_status='failed') AS delivery_failed FROM alerts WHERE created_at >= NOW() - INTERVAL :d DAY "
+                    + "SUM(delivery_status='failed') AS delivery_failed FROM alert_state WHERE created_at >= NOW() - INTERVAL :d DAY "
                     + "GROUP BY source_type, source_id", d).forEach(a -> am.put(a.get("source_type") + "\u0000" + a.get("source_id"), a));
             Map<String, Map<String, Object>> runs = new HashMap<>();
             db.rows("SELECT rule_id, COUNT(*) AS runs, AVG(duration_ms) AS avg_ms, MAX(duration_ms) AS max_ms, "
@@ -184,13 +184,13 @@ public class OpsController {
             List<Map<String, Object>> rules = db.rows("SELECT rule_id, name, status, last_evaluated_to, consecutive_failures "
                     + "FROM single_rules");
             List<Map<String, Object>> scs = db.rows("SELECT scenario_id, name, status FROM scenarios");
-            List<Map<String, Object>> fpKeys = db.rows("SELECT source_id, entity, COUNT(*) AS n FROM alerts WHERE "
+            List<Map<String, Object>> fpKeys = db.rows("SELECT source_id, entity, COUNT(*) AS n FROM alert_state WHERE "
                     + "verdict='false_positive' AND created_at >= NOW() - INTERVAL :d DAY GROUP BY source_id, entity "
                     + "ORDER BY n DESC LIMIT 200", d);
             List<Map<String, Object>> failedRuns = db.rows("SELECT rule_id, win_to, status, error, started_at FROM rule_runs "
                     + "WHERE status != 'ok' ORDER BY started_at DESC LIMIT 50");
             List<Map<String, Object>> undelivered = db.rows("SELECT alert_id, source_id, org_id, entity, severity, "
-                    + "delivery_attempts, delivery_error, created_at FROM alerts WHERE delivery_status='failed' "
+                    + "delivery_attempts, delivery_error, created_at FROM alert_state WHERE delivery_status='failed' "
                     + "ORDER BY created_at DESC LIMIT 50");
             LocalDateTime now = Kst.now();
 

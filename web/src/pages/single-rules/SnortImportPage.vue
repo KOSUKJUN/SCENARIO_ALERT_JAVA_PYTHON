@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Snort 룰 가져오기: 룰 텍스트(붙여넣기·파일) → 단일룰 정의로 변환·검증 → 고른 것만 draft 로 만든다.
+// Snort 룰 가져오기: 룰 텍스트(붙여넣기·파일) → 이벤트 탐지모듈 정의로 변환·검증 → 고른 것만 draft 로 만든다.
 // 바로 운영하지 않는다. 만든 뒤 편집기에서 미리보기·백테스트를 거쳐 silent/active 로 올린다.
 import { computed, ref, shallowRef } from 'vue';
 import { useRouter } from 'vue-router';
@@ -114,7 +114,7 @@ function openInEditor(it: SnortImportItem) {
   } catch {
     /* 저장소를 못 쓰면 새 룰 화면이 빈 정의로 열린다 */
   }
-  void router.push('/single-rules/new');
+  void router.push('/scenarios/detections/new');
 }
 
 function statusOf(it: SnortImportItem): { kind: string; label: string } {
@@ -130,7 +130,7 @@ function statusOf(it: SnortImportItem): { kind: string; label: string } {
   <div class="page">
     <div class="page-head">
       <h2>Snort 룰 가져오기</h2>
-      <div class="actions"><RouterLink to="/single-rules" class="button">단일룰 목록</RouterLink></div>
+      <div class="actions"><RouterLink to="/scenarios" class="button">시나리오 분석</RouterLink></div>
     </div>
 
     <CardBox title="1. 룰 입력">
@@ -197,7 +197,7 @@ function statusOf(it: SnortImportItem): { kind: string; label: string } {
               <td>
                 <UiBadge :kind="statusOf(it).kind">{{ statusOf(it).label }}</UiBadge>
                 <div v-if="created[it.line]" class="small" :class="created[it.line].ok ? 'muted' : 'err-text'">
-                  <RouterLink v-if="created[it.line].ok && it.definition" :to="`/single-rules/${it.definition.id}`">{{ created[it.line].msg }}</RouterLink>
+                  <RouterLink v-if="created[it.line].ok && it.definition" :to="`/scenarios/detections/${it.definition.id}`">{{ created[it.line].msg }}</RouterLink>
                   <template v-else>{{ created[it.line].msg }}</template>
                 </div>
               </td>

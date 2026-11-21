@@ -1,6 +1,7 @@
 package com.scenarioalert.engine.alerting;
 
 import com.scenarioalert.engine.attack.AttackService;
+import com.scenarioalert.engine.ch.ClickHouse;
 import com.scenarioalert.engine.d3fend.D3fendService;
 import com.scenarioalert.engine.common.AppClock;
 import com.scenarioalert.engine.common.Db;
@@ -71,9 +72,11 @@ public class AlertService {
     private final MeterRegistry meters;
     private final AttackService attack;
     private final D3fendService d3fend;
+    private final AlertStore store;
 
     public AlertService(Db db, DataSource ds, Repo repo, CaseWebhook webhook, AppProperties props, MeterRegistry meters,
-                        AttackService attack, D3fendService d3fend) {
+                        AttackService attack, D3fendService d3fend, AlertStore store) {
+        this.store = store;
         this.attack = attack;
         this.d3fend = d3fend;
         this.db = db;
@@ -126,8 +129,8 @@ public class AlertService {
 
     private Recorded recordLocked(AlertCandidate c, LocalDateTime now) {
         LocalDateTime since = now.minusSeconds(c.suppressSec());
-        Map<String, Object> ex = db.row("SELECT alert_id, severity, last_seen, attack, d3fend, silent FROM alerts WHERE source_type=:st AND "
-                        + "source_id=:sid AND org_id=:o AND entity=:e AND last_seen >= :since ORDER BY last_seen DESC LIMIT 1",
+        Map<String, Object> ex = db.row("SELECT alert_id, severity, last_seen, attack, d3fend, silent, ch_window_ms FROM alert_state "
+                        + "WHERE source_type=:st AND source_id=:sid AND org_id=:o AND entity=:e AND last_seen >= :since ORDER BY last_seen DESC LIMIT 1",
                 p("st", c.sourceType(), "sid", c.sourceId(), "o", c.orgId(), "e", c.entity(), "since", since));
         ExistingAlert existing = ex == null ? null
                 : new ExistingAlert(Db.str(ex, "alert_id"), Db.str(ex, "severity"), Db.time(ex, "last_seen"));
@@ -149,41 +152,67 @@ public class AlertService {
         D3fendService.Snapshot d3snap = d == Decision.TOUCH && !attackGrew ? null : d3fend.snapshot(d3Merged);
         String d3Json = d3snap == null || d3snap.items().isEmpty() ? null : Json.dump(d3snap.items());
         String d3Ver = d3snap == null ? null : d3snap.versionLabel();
+        // 경보 본문은 ClickHouse(AlertStore) 에, 상태는 MariaDB alert_state 에. ClickHouse 쓰기가 실패하면 예외로 MariaDB 도 되돌려
+        // 다음 주기에 같은 구간을 다시 평가한다 (반대로 MariaDB 커밋만 실패하면 같은 키의 행이 ClickHouse 에서 덮어써진다).
         if (d == Decision.CREATE) {
             String aid = UUID.randomUUID().toString();
-            db.execute("INSERT INTO alerts (alert_id, source_type, source_id, source_version, org_id, entity_type, entity, "
-                            + "severity, title, alert_node, playbook, path, first_seen, last_seen, hit_count, silent, delivery_status, attack, "
-                            + "attack_version, d3fend, d3fend_version) VALUES (:id, :st, :sid, :sv, :o, :et, :e, :sev, :t, :n, :pb, :p, :fs, "
-                            + ":ls, 1, :sil, :ds, :atk, :atv, :d3f, :d3v)",
+            long w = AlertStore.windowMs(c.firstSeen());
+            db.execute("INSERT INTO alert_state (alert_id, source_type, source_id, source_version, org_id, entity_type, entity, "
+                            + "severity, alert_node, path, last_seen, ch_window_ms, silent, delivery_status, attack, attack_version, d3fend, "
+                            + "d3fend_version) VALUES (:id, :st, :sid, :sv, :o, :et, :e, :sev, :n, :p, :ls, :w, :sil, :ds, :atk, :atv, :d3f, :d3v)",
                     p("id", aid, "st", c.sourceType(), "sid", c.sourceId(), "sv", c.sourceVersion(), "o", c.orgId(),
-                            "et", c.entityType(), "e", c.entity(), "sev", c.severity(), "t", c.title(), "n", c.alertNode(),
-                            "pb", c.playbook(), "p", Json.dump(c.path()), "fs", c.firstSeen(), "ls", c.lastSeen(),
+                            "et", c.entityType(), "e", c.entity(), "sev", c.severity(), "n", c.alertNode(),
+                            "p", Json.dump(c.path()), "ls", c.lastSeen(), "w", w,
                             "sil", c.silent(), "ds", delivery, "atk", attackJson, "atv", attackVer, "d3f", d3Json, "d3v", d3Ver));
+            store.put(content(aid, c, c.firstSeen(), 1, merged), w, now);
             meters.counter("alerts_total", "source", c.sourceId(), "decision", "create").increment();
             return new Recorded(d, aid);
         }
+        long w = Db.lng(ex, "ch_window_ms");
         if (d == Decision.UPGRADE) {
-            db.execute("UPDATE alerts SET severity=:sev, title=:t, alert_node=:n, playbook=:pb, path=:p, source_version=:sv, "
-                            + "last_seen=GREATEST(last_seen, :ls), hit_count=hit_count+1, upgraded_at=:now, silent=:sil, attack=:atk, attack_version=:atv, "
+            db.execute("UPDATE alert_state SET severity=:sev, alert_node=:n, path=:p, source_version=:sv, "
+                            + "last_seen=GREATEST(last_seen, :ls), upgraded_at=:now, silent=:sil, attack=:atk, attack_version=:atv, "
                             + "d3fend=:d3f, d3fend_version=:d3v, delivery_status=:ds, delivery_attempts=0, next_delivery_at=NULL, delivery_error=NULL "
                             + "WHERE alert_id=:id",
-                    p("id", existing.alertId(), "sev", c.severity(), "t", c.title(), "n", c.alertNode(), "pb", c.playbook(),
+                    p("id", existing.alertId(), "sev", c.severity(), "n", c.alertNode(),
                             "p", Json.dump(c.path()), "sv", c.sourceVersion(), "ls", c.lastSeen(), "now", now,
                             "sil", c.silent(), "ds", delivery, "atk", attackJson, "atv", attackVer, "d3f", d3Json, "d3v", d3Ver));
+            // 등급·제목이 바뀌어 ClickHouse 키가 바뀐다: 이전 행을 지우고 최초 시각·횟수를 이어서 새로 넣는다
+            Map<String, Object> old = store.find(existing.alertId(), w);
+            LocalDateTime fs = old == null ? c.firstSeen() : ClickHouse.time(old, "event_sdt");
+            long count = old == null ? 1 : (long) ClickHouse.num(old, "count") + 1;
+            store.delete(existing.alertId(), w);
+            store.put(content(existing.alertId(), c, fs, count, merged), w, now);
             meters.counter("alerts_total", "source", c.sourceId(), "decision", "upgrade").increment();
         } else if (attackGrew) {
             // ATT&CK 단계가 늘었다: 기법을 갱신하고 사고처리 시스템에 다시 보낸다 (alert_id 로 같은 사건을 갱신)
             boolean silentNow = Db.bool(ex, "silent");
-            db.execute("UPDATE alerts SET last_seen=GREATEST(last_seen, :ls), hit_count=hit_count+1, attack=:atk, attack_version=:atv, d3fend=:d3f, d3fend_version=:d3v"
+            db.execute("UPDATE alert_state SET last_seen=GREATEST(last_seen, :ls), attack=:atk, attack_version=:atv, d3fend=:d3f, d3fend_version=:d3v"
                             + (silentNow ? "" : ", delivery_status='pending', delivery_attempts=0, next_delivery_at=NULL, delivery_error=NULL")
                             + " WHERE alert_id=:id",
                     p("id", existing.alertId(), "ls", c.lastSeen(), "atk", attackJson, "atv", attackVer, "d3f", d3Json, "d3v", d3Ver));
+            touchOrPut(existing, c, w, new ArrayList<>(merged), now);
             meters.counter("alerts_total", "source", c.sourceId(), "decision", "attack_stage").increment();
         } else {
-            db.execute("UPDATE alerts SET last_seen=GREATEST(last_seen, :ls), hit_count=hit_count+1 WHERE alert_id=:id",
+            db.execute("UPDATE alert_state SET last_seen=GREATEST(last_seen, :ls) WHERE alert_id=:id",
                     p("id", existing.alertId(), "ls", c.lastSeen()));
+            touchOrPut(existing, c, w, null, now);
         }
         return new Recorded(d, existing.alertId());
+    }
+
+    /** 같은 키로 횟수·최종 시각 갱신. ClickHouse 행이 없으면(보관 기간이 지났거나 지워졌으면) 지금 값으로 다시 넣는다. */
+    private void touchOrPut(ExistingAlert existing, AlertCandidate c, long w, List<String> attackIds, LocalDateTime now) {
+        if (!store.touch(existing.alertId(), w, c.lastSeen(), attackIds, now)) {
+            store.put(content(existing.alertId(), c, c.firstSeen(), 1, attackIds == null ? Set.copyOf(c.attack()) : Set.copyOf(attackIds)),
+                    w, now);
+        }
+    }
+
+    private static AlertStore.Content content(String alertId, AlertCandidate c, LocalDateTime firstSeen, long count, Set<String> attackIds) {
+        return new AlertStore.Content(alertId, c.sourceType(), c.sourceId(), c.sourceVersion(), c.orgId(), c.entityType(), c.entity(),
+                c.severity(), c.title(), c.alertNode(), c.playbook(), c.path(), firstSeen, c.lastSeen(), count, c.silent(),
+                new ArrayList<>(new TreeSet<>(attackIds)));
     }
 
     static Set<String> attackIds(Object json) {
@@ -214,7 +243,7 @@ public class AlertService {
         m.put("asset", Json.obj("tags", asset == null ? List.of() : asset.get("tags"),
                 "purpose", asset == null ? null : asset.get("purpose"), "os", asset == null ? null : asset.get("os")));
         m.put("path", Json.load(Db.str(a, "path")));
-        m.put("first_seen", Kst.iso(Db.time(a, "first_seen")));
+        m.put("first_seen", a.get("first_seen") instanceof String s ? s : Kst.iso(Db.time(a, "first_seen")));
         m.put("last_seen", Kst.iso(Db.time(a, "last_seen")));
         m.put("playbook", a.get("playbook") == null ? "" : a.get("playbook"));
         // MITRE ATT&CK 기법 (경보 생성 때 스냅샷): [{id, name, tactics:[{id, name, shortname}]}]
@@ -237,14 +266,20 @@ public class AlertService {
         List<Map<String, Object>> pend = new ArrayList<>();
         List<Map<String, Object>> payloads = new ArrayList<>();
         db.txRun(() -> {
-            pend.addAll(db.rows("SELECT * FROM alerts WHERE delivery_status='pending' AND silent=0 AND "
+            pend.addAll(db.rows("SELECT * FROM alert_state WHERE delivery_status='pending' AND silent=0 AND "
                     + "(next_delivery_at IS NULL OR next_delivery_at <= :now) ORDER BY created_at LIMIT :n FOR UPDATE SKIP LOCKED",
                     p("now", now, "n", limit)));
             if (!pend.isEmpty()) {
-                db.execute("UPDATE alerts SET next_delivery_at=:lease WHERE alert_id IN (:ids)",
+                db.execute("UPDATE alert_state SET next_delivery_at=:lease WHERE alert_id IN (:ids)",
                         p("lease", now.plusSeconds(DELIVERY_LEASE_SEC), "ids", pend.stream().map(a -> Db.str(a, "alert_id")).toList()));
             }
-            pend.forEach(a -> payloads.add(buildPayload(a)));
+            // 경보 본문(제목·최초 시각·대응 절차)은 ClickHouse 에서 붙인다
+            Map<String, Map<String, Object>> bodies = store.findMany(pend.stream().map(a -> Db.str(a, "alert_id")).toList(),
+                    pend.stream().map(a -> Db.lng(a, "ch_window_ms")).toList());
+            pend.forEach(a -> {
+                a.putAll(AlertStore.toApi(bodies.get(Db.str(a, "alert_id"))));
+                payloads.add(buildPayload(a));
+            });
         });
         int sent = 0;
         for (int i = 0; i < pend.size(); i++) {
@@ -254,7 +289,7 @@ public class AlertService {
                     "d3f", a.get("d3fend"), "e", r.error());
             if (r.ok()) {
                 pr.put("ref", r.caseRef());
-                db.txRun(() -> db.execute("UPDATE alerts SET delivery_status='sent', delivery_attempts=delivery_attempts+1, "
+                db.txRun(() -> db.execute("UPDATE alert_state SET delivery_status='sent', delivery_attempts=delivery_attempts+1, "
                         + "case_ref=COALESCE(:ref, case_ref), delivery_error=NULL, next_delivery_at=NULL WHERE " + SAME_VERSION, pr));
                 sent++;
                 continue;
@@ -263,12 +298,12 @@ public class AlertService {
             meters.counter("delivery_failures_total").increment();
             pr.put("n", attempts);
             if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-                db.txRun(() -> db.execute("UPDATE alerts SET delivery_status='failed', delivery_attempts=:n, delivery_error=:e, "
+                db.txRun(() -> db.execute("UPDATE alert_state SET delivery_status='failed', delivery_attempts=:n, delivery_error=:e, "
                         + "next_delivery_at=NULL WHERE " + SAME_VERSION, pr));
             } else {
                 long delay = Math.min(30L * (1L << (attempts - 1)), 3600L);
                 pr.put("nx", now.plusSeconds(delay));
-                db.txRun(() -> db.execute("UPDATE alerts SET delivery_attempts=:n, delivery_error=:e, next_delivery_at=:nx "
+                db.txRun(() -> db.execute("UPDATE alert_state SET delivery_attempts=:n, delivery_error=:e, next_delivery_at=:nx "
                         + "WHERE " + SAME_VERSION, pr));
             }
         }

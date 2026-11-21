@@ -61,7 +61,7 @@ export interface MetaFields {
   asset_tags: string[];
 }
 
-// ---------- 단일룰 ----------
+// ---------- 이벤트 탐지모듈 ----------
 export type FilterLeaf = { field: string; op: string; value?: Json };
 export type FilterNode = { all: FilterNode[] } | { any: FilterNode[] } | { not: FilterNode } | FilterLeaf;
 
@@ -214,6 +214,24 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+/** 시나리오 그룹 (시나리오 분석 왼쪽). 탐지 판정과 무관한 화면 분류 */
+export interface ScenarioGroup {
+  group_id: number;
+  /** 경보 테이블(alert_integrated_all) 의 rull_grp_cd 로 들어가는 그룹 코드 */
+  grp_cd: string;
+  name: string;
+  sort_order: number;
+  scenario_count: number;
+}
+
+/** 시나리오 분석 왼쪽에서 고른 그룹: 'all' = 전체, 'none' = 미분류, 숫자 = 그룹 ID */
+export type GroupKey = 'all' | 'none' | number;
+export interface ScenarioGroupList {
+  groups: ScenarioGroup[];
+  total: number;
+  ungrouped: number;
+}
+
 export interface ScenarioSummary {
   scenario_id: string;
   name: string;
@@ -227,6 +245,8 @@ export interface ScenarioSummary {
   severities: Severity[];
   updated_at: string | null;
   alerts_24h?: number;
+  /** 화면 분류용 시나리오 그룹 (없으면 미분류) */
+  group_id?: number | null;
 }
 
 export interface GraphIssue {
@@ -394,6 +414,22 @@ export interface AlertItem {
   attack?: AttackRef[];
   /** 경보 생성(상향) 때의 지정 대응방책 (D3FEND) 스냅샷 */
   d3fend?: D3fendRef[];
+  /** ClickHouse 경보 본문(codlog.alert_integrated_all) 에서 온 값 */
+  /** 룰 그룹 코드 = 시나리오 그룹 코드 (경보를 만들 때의 값) */
+  rull_grp_cd?: string | null;
+  /** CODPRO 그룹 = 대상 기관 코드·기관명 */
+  group_cd?: string | null;
+  group_nm?: string | null;
+  risk?: string | null;
+  data_type?: string | null;
+  src_ip?: string | null;
+  src_port?: number | null;
+  src_iso?: string | null;
+  dst_ip?: string | null;
+  dst_port?: number | null;
+  action?: string | null;
+  product?: string | null;
+  origin_id?: string | null;
 }
 
 export interface AlertDetail extends AlertItem {

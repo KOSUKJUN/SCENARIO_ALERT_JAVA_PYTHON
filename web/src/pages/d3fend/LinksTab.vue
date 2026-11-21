@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 대응방책 연계 현황: 단일룰과 순서도 경보 노드마다 ATT&CK 기법과 지정 대응방책(D3FEND).
+// 대응방책 연계 현황: 이벤트 탐지모듈과 시나리오 경보 노드마다 ATT&CK 기법과 지정 대응방책(D3FEND).
 // ATT&CK 기법은 있는데 사고 대응(격리·퇴출·복구) 대응방책이 없는 곳을 찾아 보완하는 화면이다.
 import { computed, ref } from 'vue';
 import { api } from '../../api';
@@ -35,7 +35,7 @@ const items = computed(() =>
     <ErrorBox :error="r.error.value" />
     <template v-if="r.data.value">
       <p class="small" data-testid="d3fend-links-summary">
-        단일룰·순서도 경보 노드 {{ r.data.value.summary.total }}곳 · ATT&amp;CK 기법 있음 {{ r.data.value.summary.with_attack }} ·
+        이벤트 탐지모듈·시나리오 경보 노드 {{ r.data.value.summary.total }}곳 · ATT&amp;CK 기법 있음 {{ r.data.value.summary.with_attack }} ·
         대응방책 지정 {{ r.data.value.summary.with_d3fend }} · 사고 대응(격리·퇴출·복구) 지정 {{ r.data.value.summary.with_response }}
         <span v-if="!r.data.value.version" class="warn-text">· 활성 D3FEND 버전이 없어 이름을 표시하지 못합니다</span>
       </p>
@@ -55,8 +55,8 @@ const items = computed(() =>
           <tbody>
             <tr v-for="i in items" :key="`${i.kind}${i.id}${i.node ?? ''}`" :data-testid="`d3fend-link-${i.id}${i.node ? '-' + i.node : ''}`">
               <td>
-                {{ i.kind === 'rule' ? '단일룰' : '순서도' }}
-                <RouterLink :to="i.kind === 'rule' ? `/single-rules/${i.id}` : `/scenarios/${i.id}`">{{ i.id }}</RouterLink>
+                {{ i.kind === 'rule' ? '이벤트 탐지모듈' : '시나리오' }}
+                <RouterLink :to="i.kind === 'rule' ? `/scenarios/detections/${i.id}` : `/scenarios/${i.id}`">{{ i.id }}</RouterLink>
                 <span v-if="i.node" class="muted small"> 경보 노드 {{ i.node }}</span>
                 <StatusBadge :status="i.status" />
                 <div class="small">{{ i.title ?? i.name }}</div>
@@ -82,7 +82,7 @@ const items = computed(() =>
     </template>
     <D3fendTechniqueModal v-if="detail" :id="detail" @close="detail = null" />
     <ModalDialog v-if="panel" :title="`대응방책 권고: ${panel.id}${panel.node ? ' ' + panel.node : ''}`" wide @close="panel = null">
-      <p class="small">ATT&amp;CK {{ panel.attack.join(', ') }} 기준. 지정하려면 {{ panel.kind === 'rule' ? '단일룰' : '순서도 경보 노드' }} 편집 화면의 "지정 대응방책" 에서 추가합니다.</p>
+      <p class="small">ATT&amp;CK {{ panel.attack.join(', ') }} 기준. 지정하려면 {{ panel.kind === 'rule' ? '이벤트 탐지모듈' : '순서도 경보 노드' }} 편집 화면의 "지정 대응방책" 에서 추가합니다.</p>
       <CountermeasuresPanel :attack="panel.attack" :designated="panel.d3fend.map((d) => d.id)" />
     </ModalDialog>
   </div>
